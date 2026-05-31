@@ -1,0 +1,43 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── Foundry build artefacts ───────────────────────────────────────────────────
+contract/out/
+contract/cache/
+contract/broadcast/
+contract/.gas-snapshot
+
+# ── Foundry dependencies (restore with: cd contract && forge install) ─────────
+contract/lib/
+
+# ── Node / npm (contract Pyth SDK) ────────────────────────────────────────────
+contract/node_modules/
+contract/package-lock.json
+
+# ── Next.js / pnpm ────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/.pnpm-store/
+frontend/out/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+ai/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+*.egg-info/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
