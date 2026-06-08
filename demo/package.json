@@ -1,0 +1,21 @@
+{
+  "name": "glyph-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Glyph demo bots — an attacker that earns toxicity and a clean trader that stays cheap.",
+  "scripts": {
+    "attacker": "tsx attacker_bot.ts",
+    "clean": "tsx clean_trader.ts",
+    "score": "tsx attacker_bot.ts --score-only"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
