@@ -83,7 +83,7 @@ def sign_attestation(wallet: str, score: int, nonce: int) -> Attestation:
         },
     }
 
-    signed    = account.sign_typed_data(full_message=typed_data)
+    signed    = account.sign_message(encode_typed_data(full_message=typed_data))
     sig_bytes = signed.signature
 
     # Verify the sig recovers to our attestor before returning

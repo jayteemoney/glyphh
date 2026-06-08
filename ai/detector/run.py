@@ -75,6 +75,9 @@ def main() -> None:
 
     # 5. Optionally submit on-chain
     if args.submit:
+        from detector.safety import check_and_record
+
+        check_and_record(wallet, nonce)  # replay + rate-limit guard before signing goes live
         _submit(attestation_dict)
     else:
         print("\nDry-run complete. Pass --submit to send on-chain.")

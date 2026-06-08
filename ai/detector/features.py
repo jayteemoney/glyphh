@@ -18,6 +18,7 @@ import os
 from web3 import Web3
 from web3.types import LogReceipt
 
+from detector.brevis import extract_from_brevis
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -74,7 +75,9 @@ def extract_features(wallet: str) -> dict[str, float]:
     sandwich_ratio    = _compute_sandwich_ratio(swap_events)
     burst_ratio       = _compute_burst_ratio(swap_events)
     new_wallet_flag   = _is_new_wallet(w3, wallet_cs, from_block)
-    hist_tox_score_7d = _compute_hist_tox(toxic_events)
+    # Prefer the ZK-proven historical toxicity (trustless); fall back to the RPC event scan.
+    brevis_score      = extract_from_brevis(wallet_cs)
+    hist_tox_score_7d = brevis_score if brevis_score is not None else _compute_hist_tox(toxic_events)
 
     return {
         "swap_count_7d":     min(swap_count / 1000.0, 1.0),
