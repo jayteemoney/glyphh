@@ -13,7 +13,7 @@ import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 
 import {GlyphHook} from "../src/GlyphHook.sol";
 import {ReputationRegistry} from "../src/ReputationRegistry.sol";
-import {GlyphReactive} from "../src/reactive/GlyphReactive.sol";
+import {GlyphCallbackAdapter} from "../src/reactive/GlyphCallbackAdapter.sol";
 import {IReputationRegistry} from "../src/interfaces/IReputationRegistry.sol";
 import {HookMiner} from "../test/utils/HookMiner.sol";
 
@@ -22,6 +22,11 @@ contract DeployGlyph is Script {
 
     address constant UNICHAIN_POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
     address constant UNICHAIN_PYTH         = 0x2880aB155794e7179c9eE2e38200202908C17B43;
+
+    // Foundry's deterministic CREATE2 deployer. Inside a broadcast, `new GlyphHook{salt}` is
+    // deployed BY this factory, not by the EOA — so the hook salt must be mined against it or
+    // the resulting address won't carry the permission flags (the `require` below would fail).
+    address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     bytes32 constant ETH_USD_FEED  = 0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
     bytes32 constant USDC_USD_FEED = 0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a;
@@ -45,7 +50,7 @@ contract DeployGlyph is Script {
         console2.log("ReputationRegistry:", address(registry));
 
         (address expectedHookAddr, bytes32 salt) = HookMiner.find(
-            deployer,
+            CREATE2_DEPLOYER,
             HOOK_FLAGS,
             type(GlyphHook).creationCode,
             abi.encode(poolManager, address(registry), pythAddress, deployer)
@@ -64,9 +69,13 @@ contract DeployGlyph is Script {
         registry.setAttestor(attestorAddr, true);
         console2.log("Hook authorized, attestor authorized.");
 
-        GlyphReactive reactive = new GlyphReactive(address(registry));
-        registry.setReactiveProxy(address(reactive));
-        console2.log("GlyphReactive:     ", address(reactive));
+        // Reactive path (P2): deploy the destination-chain callback adapter and register it
+        // as the registry's reactiveProxy. The GlyphReactive RSC itself deploys separately on
+        // the Reactive Network (Kopli) — see script/DeployReactive.s.sol.
+        address callbackProxy = vm.envOr("CALLBACK_PROXY_ADDRESS", address(0));
+        GlyphCallbackAdapter adapter = new GlyphCallbackAdapter(callbackProxy, IReputationRegistry(address(registry)));
+        registry.setReactiveProxy(address(adapter));
+        console2.log("GlyphCallbackAdapter:", address(adapter));
 
         address tokenA = vm.envOr("TOKEN_A", address(0));
         address tokenB = vm.envOr("TOKEN_B", address(0));
@@ -74,7 +83,7 @@ contract DeployGlyph is Script {
         if (tokenA != address(0) && tokenB != address(0)) {
             _initPool(IPoolManager(poolManager), hook, tokenA, tokenB);
         } else {
-            console2.log("TOKEN_A/TOKEN_B not set — run DeployMockTokens.s.sol first.");
+            console2.log("TOKEN_A/TOKEN_B not set - run DeployMockTokens.s.sol first.");
         }
 
         vm.stopBroadcast();
@@ -83,7 +92,7 @@ contract DeployGlyph is Script {
         console2.log("Copy these into your .env:");
         console2.log("REGISTRY_ADDRESS=", address(registry));
         console2.log("HOOK_ADDRESS=    ", address(hook));
-        console2.log("REACTIVE_ADDRESS=", address(reactive));
+        console2.log("CALLBACK_ADAPTER=", address(adapter));
     }
 
     function _initPool(

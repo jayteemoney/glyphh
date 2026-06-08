@@ -7,11 +7,11 @@ import {IReputationRegistry} from "../src/interfaces/IReputationRegistry.sol";
 
 contract ReputationRegistryTest is Test {
     uint256 constant ATTESTOR_PK = 0xA11CE;
-    address immutable ATTESTOR   = vm.addr(0xA11CE);
-    address constant OWNER       = address(0xD1);
-    address constant WALLET      = address(0xB1);
-    address constant HOOK        = address(0xC1);
-    address constant PROXY       = address(0xE1);
+    address immutable ATTESTOR = vm.addr(0xA11CE);
+    address constant OWNER = address(0xD1);
+    address constant WALLET = address(0xB1);
+    address constant HOOK = address(0xC1);
+    address constant PROXY = address(0xE1);
 
     ReputationRegistry registry;
 
@@ -29,21 +29,19 @@ contract ReputationRegistryTest is Test {
     function _sign(IReputationRegistry.Attestation memory a) internal view returns (bytes memory) {
         bytes32 domainSep = registry.SCORE_TYPEHASH();
         // Build the EIP-712 digest the same way the contract does.
-        bytes32 structHash = keccak256(
-            abi.encode(domainSep, a.wallet, a.value, a.nonce, a.deadline)
-        );
+        bytes32 structHash = keccak256(abi.encode(domainSep, a.wallet, a.value, a.nonce, a.deadline));
         // Use the registry's exposed domain via eip712Domain().
-        (
-            , string memory name, string memory version,
-            uint256 chainId, address verifyingContract,,
-        ) = registry.eip712Domain();
-        bytes32 domainHash = keccak256(abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256(bytes(name)),
-            keccak256(bytes(version)),
-            chainId,
-            verifyingContract
-        ));
+        (, string memory name, string memory version, uint256 chainId, address verifyingContract,,) =
+            registry.eip712Domain();
+        bytes32 domainHash = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes(name)),
+                keccak256(bytes(version)),
+                chainId,
+                verifyingContract
+            )
+        );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainHash, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ATTESTOR_PK, digest);
         return abi.encodePacked(r, s, v);
@@ -51,9 +49,9 @@ contract ReputationRegistryTest is Test {
 
     function _attestation(uint16 value, uint32 nonce) internal view returns (IReputationRegistry.Attestation memory) {
         IReputationRegistry.Attestation memory a;
-        a.wallet   = WALLET;
-        a.value    = value;
-        a.nonce    = nonce;
+        a.wallet = WALLET;
+        a.value = value;
+        a.nonce = nonce;
         a.deadline = uint64(block.timestamp + 600);
         a.signature = _sign(a);
         return a;
@@ -214,5 +212,112 @@ contract ReputationRegistryTest is Test {
         vm.assume(val <= 10_000);
         registry.updateScore(_attestation(val, 1));
         assertLe(registry.scoreOf(WALLET), 10_000);
+    }
+
+    // ── Decay ──────────────────────────────────────────────────────────────────
+
+    function _attestationFor(address w, uint16 value, uint32 nonce)
+        internal
+        view
+        returns (IReputationRegistry.Attestation memory a)
+    {
+        a.wallet = w;
+        a.value = value;
+        a.nonce = nonce;
+        a.deadline = uint64(block.timestamp + 600);
+        a.signature = _sign(a);
+    }
+
+    function test_decay_freshScoreIsFull() public {
+        registry.updateScore(_attestation(8_000, 1));
+        assertEq(registry.scoreOf(WALLET), 8_000);
+    }
+
+    function test_decay_halfPeriodHalvesScore() public {
+        registry.updateScore(_attestation(10_000, 1));
+        vm.warp(block.timestamp + registry.DECAY_PERIOD() / 2);
+        assertEq(registry.scoreOf(WALLET), 5_000);
+    }
+
+    function test_decay_fullPeriodZeroesScore() public {
+        registry.updateScore(_attestation(10_000, 1));
+        vm.warp(block.timestamp + registry.DECAY_PERIOD());
+        assertEq(registry.scoreOf(WALLET), 0);
+    }
+
+    function test_decay_rawValueUnaffected() public {
+        registry.updateScore(_attestation(8_000, 1));
+        vm.warp(block.timestamp + registry.DECAY_PERIOD() / 2);
+        assertEq(registry.scoreOf(WALLET), 4_000); // decayed
+        assertEq(registry.scoreDataOf(WALLET).value, 8_000); // raw
+    }
+
+    function test_reportToxicTrade_rebaselinesDecayedValue() public {
+        vm.prank(HOOK);
+        registry.reportToxicTrade(WALLET, address(0x1), 10_000); // value -> 5_000
+        assertEq(registry.scoreOf(WALLET), 5_000);
+
+        vm.warp(block.timestamp + registry.DECAY_PERIOD()); // fully decays
+        assertEq(registry.scoreOf(WALLET), 0);
+
+        vm.prank(HOOK);
+        registry.reportToxicTrade(WALLET, address(0x1), 200); // base 0 + 100, not resurrected
+        assertEq(registry.scoreOf(WALLET), 100);
+    }
+
+    // ── Batch ──────────────────────────────────────────────────────────────────
+
+    function test_updateScoreBatch_appliesAll() public {
+        address w2 = address(0xB2);
+        IReputationRegistry.Attestation[] memory batch = new IReputationRegistry.Attestation[](2);
+        batch[0] = _attestationFor(WALLET, 1_000, 1);
+        batch[1] = _attestationFor(w2, 2_000, 1);
+        registry.updateScoreBatch(batch);
+        assertEq(registry.scoreOf(WALLET), 1_000);
+        assertEq(registry.scoreOf(w2), 2_000);
+    }
+
+    function test_updateScoreBatch_RevertWhenOneInvalid() public {
+        IReputationRegistry.Attestation[] memory batch = new IReputationRegistry.Attestation[](2);
+        batch[0] = _attestationFor(WALLET, 1_000, 1);
+        batch[1] = _attestationFor(WALLET, 2_000, 1); // duplicate nonce -> NonceTooLow
+        vm.expectRevert(IReputationRegistry.NonceTooLow.selector);
+        registry.updateScoreBatch(batch);
+        assertEq(registry.scoreOf(WALLET), 0); // atomic: nothing landed
+    }
+
+    // ── Deadline window ─────────────────────────────────────────────────────────
+
+    function test_updateScore_RevertWhenDeadlineTooFar() public {
+        IReputationRegistry.Attestation memory a = _attestation(1_000, 1);
+        a.deadline = uint64(block.timestamp + registry.MAX_DEADLINE_WINDOW() + 1);
+        a.signature = _sign(a);
+        vm.expectRevert(ReputationRegistry.DeadlineTooFar.selector);
+        registry.updateScore(a);
+    }
+
+    // ── Events + getters ────────────────────────────────────────────────────────
+
+    function test_setAttestor_emitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit ReputationRegistry.AttestorAuthorized(address(0xF2), true);
+        vm.prank(OWNER);
+        registry.setAttestor(address(0xF2), true);
+    }
+
+    function test_setReactiveProxy_emitsEvent() public {
+        vm.expectEmit(true, false, false, false);
+        emit ReputationRegistry.ReactiveProxyUpdated(address(0xF3));
+        vm.prank(OWNER);
+        registry.setReactiveProxy(address(0xF3));
+    }
+
+    function test_isAuthorizedAttestor() public view {
+        assertTrue(registry.isAuthorizedAttestor(ATTESTOR));
+        assertFalse(registry.isAuthorizedAttestor(address(0xDEAD)));
+    }
+
+    function test_domainSeparator_nonZero() public view {
+        assertTrue(registry.domainSeparator() != bytes32(0));
     }
 }

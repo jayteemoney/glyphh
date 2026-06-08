@@ -138,16 +138,23 @@ contract GlyphHook is IHooks, ImmutableState, Ownable {
         delete _pendingToxic[swapKey];
 
         if (charged > DEFAULT_BASE_FEE) {
-            int128  raw0    = delta.amount0();
-            int128  raw1    = delta.amount1();
-            uint256 abs0    = raw0 < 0 ? uint256(uint128(-raw0)) : uint256(uint128(raw0));
-            uint256 abs1    = raw1 < 0 ? uint256(uint128(-raw1)) : uint256(uint128(raw1));
-            uint256 excess0 = FullMath.mulDiv(abs0, charged - DEFAULT_BASE_FEE, 1_000_000);
-            uint256 excess1 = FullMath.mulDiv(abs1, charged - DEFAULT_BASE_FEE, 1_000_000);
+            // The toxicity premium — the part of the fee above the base fee — is delivered to
+            // LPs automatically by the dynamic LP fee (OVERRIDE_FEE_FLAG set in beforeSwap):
+            // the PoolManager credits the swap's LP fee to in-range liquidity as fee growth.
+            // We surface the premium amount here for observability (dashboard ToxicTradesFeed).
+            //
+            // Do NOT call poolManager.donate() here: the override fee already pays LPs, so a
+            // donate() would (a) double-count and (b) leave the hook owing tokens it never
+            // settles, reverting the whole swap with CurrencyNotSettled.
+            int128 raw0 = delta.amount0();
+            int128 raw1 = delta.amount1();
+            uint256 abs0 = raw0 < 0 ? uint256(uint128(-raw0)) : uint256(uint128(raw0));
+            uint256 abs1 = raw1 < 0 ? uint256(uint128(-raw1)) : uint256(uint128(raw1));
+            uint256 premium0 = FullMath.mulDiv(abs0, charged - DEFAULT_BASE_FEE, 1_000_000);
+            uint256 premium1 = FullMath.mulDiv(abs1, charged - DEFAULT_BASE_FEE, 1_000_000);
 
-            if (excess0 > 0 || excess1 > 0) {
-                poolManager.donate(key, excess0, excess1, "");
-                emit LPDonation(key.toId(), excess0, excess1);
+            if (premium0 > 0 || premium1 > 0) {
+                emit LPDonation(key.toId(), premium0, premium1);
             }
         }
 
