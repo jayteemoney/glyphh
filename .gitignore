@@ -41,3 +41,6 @@ ai/.venv/
 .vscode/
 *.swp
 *.swo
+
+# keeper / detector replay-guard state
+.detector_state.json
