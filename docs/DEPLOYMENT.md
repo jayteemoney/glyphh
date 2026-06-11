@@ -74,6 +74,9 @@ Score read back as `7999` on the flagged swap — that's the registry's time-dec
 
 ## 4. Frontend integration (`frontend/.env.local`)
 
+Hosted production build: **https://glyphh-alpha.vercel.app** (Vercel, root directory
+`frontend`, auto-deploys from `main` with the env vars below).
+
 The dashboard reads three env vars:
 
 ```bash

@@ -7,6 +7,9 @@ traders pay the standard 0.30% fee. Swaps from wallets with a toxic history — 
 arbitrageurs, MEV bots — pay up to 10%, with the **excess donated directly back to LPs**. A wallet
 flagged in one pool is guarded against in *every* Glyph pool within seconds.
 
+> **Live app: [glyphh-alpha.vercel.app](https://glyphh-alpha.vercel.app)** — connect a wallet
+> and watch the registry stream in real time.
+>
 > UHI9 / Atrium hookathon submission.
 > **Full written case — problem, solution, ecosystem gap, positioning, and UHI judging
 > alignment — in [`docs/`](docs/README.md).**
@@ -157,6 +160,8 @@ cd ../demo && npx tsx attacker_bot.ts   # now 5.2% fee, swaps emit LPDonation to
 test routers, seeds liquidity, and funds the bot wallets — see `demo/README.md`.
 
 ### Frontend dashboard
+
+Hosted: **https://glyphh-alpha.vercel.app** (auto-deploys from `main`). To run locally:
 
 ```bash
 cd frontend

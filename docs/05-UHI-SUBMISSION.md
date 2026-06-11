@@ -141,6 +141,8 @@ trusted relayer. How efficiently it's used:
       Suggested one-liner: *"Glyph prices each swap by who is trading: wallets earn a
       decaying toxicity score, MEV bots pay up to 33x the base fee, and LPs keep the
       premium — across every pool at once."*
+- [ ] **Live app link in the submission**: https://glyphh-alpha.vercel.app — judges can
+      connect a wallet and see their own score without installing anything.
 - [ ] **Live deployment addresses** in the submission (judges can verify on Uniscan —
       include the clean-swap and flagged-swap verification txs from DEPLOYMENT.md).
 - [ ] **Demo-day presentation**: lead with the live dashboard, run the attack live if

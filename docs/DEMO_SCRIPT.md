@@ -11,7 +11,7 @@ Three terminals + one browser window:
 |---|---|
 | Terminal A (left) | `keeper` — the autonomous detector |
 | Terminal B (right-top) | `clean_trader.ts` then `attacker_bot.ts` |
-| Browser | `http://localhost:3000/dashboard` — live scores + toxic feed |
+| Browser | https://glyphh-alpha.vercel.app/dashboard (or `localhost:3000` if offline) — live scores + toxic feed |
 
 ## Prep (before recording — not in the video)
 

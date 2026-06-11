@@ -10,8 +10,9 @@ the one that matches you. Contract addresses referenced throughout live in
 
 You need a browser wallet (MetaMask or any injected wallet) and two minutes.
 
-1. **Open the app** and land on the homepage. The hero card shows the core idea: the same
-   pool quoting two very different fees to two very different traders.
+1. **Open the app** at [glyphh-alpha.vercel.app](https://glyphh-alpha.vercel.app). The hero
+   card shows the core idea: the same pool quoting two very different fees to two very
+   different traders.
 2. **Click "Connect wallet"** in the top right (or any of the big buttons). Approve the
    connection in your wallet. If you are on another network, the button changes to
    "Switch network" and one click moves you over.
