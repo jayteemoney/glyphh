@@ -1,4 +1,5 @@
 import { http, createConfig } from "wagmi";
+import { injected } from "wagmi/connectors";
 import { defineChain } from "viem";
 
 /// Unichain Sepolia — defined locally so we don't depend on a specific viem/chains export.
@@ -19,9 +20,11 @@ export const unichainSepolia = defineChain({
 
 export const config = createConfig({
   chains: [unichainSepolia],
+  connectors: [injected()],
   transports: {
     [unichainSepolia.id]: http(),
   },
+  ssr: true,
 });
 
 declare module "wagmi" {

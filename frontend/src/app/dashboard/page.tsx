@@ -1,34 +1,74 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { useAccount } from "wagmi";
 import { useGlyphEvents } from "@/hooks/useGlyphEvents";
+import { useReputationScore } from "@/hooks/useReputationScore";
 import { ScoreTable } from "@/components/dashboard/ScoreTable";
 import { ToxicTradesFeed } from "@/components/dashboard/ToxicTradesFeed";
 import { PoolStats } from "@/components/dashboard/PoolStats";
+import { ConnectButton } from "@/components/ConnectButton";
+import { feePct, riskOf, riskRing, shortAddr } from "@/lib/format";
 
 export default function DashboardPage() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const { address, isConnected } = useAccount();
   const { scores, toxicTrades, donations, configured } = useGlyphEvents();
 
+  // The dashboard opens with a connected wallet. Until then, the door.
+  if (mounted && !isConnected) {
+    return (
+      <main className="mx-auto flex w-full max-w-6xl flex-1 items-center justify-center px-4 py-16 sm:px-6">
+        <div className="card reveal w-full max-w-md rounded-3xl p-8 text-center">
+          <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-foreground text-lg font-semibold text-background">
+            G
+          </span>
+          <h1 className="mt-5 text-xl font-semibold tracking-tight">
+            Connect to see the pool&apos;s memory
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-500">
+            The dashboard streams live scores, flags and LP payouts straight from the chain.
+            Connect a wallet and you&apos;ll also see your own reputation, and the exact fee any
+            Glyph pool would quote you right now.
+          </p>
+          <div className="mt-6 flex justify-center">
+            <ConnectButton size="lg" />
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
+    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Live reputation dashboard</h1>
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Live reputation dashboard</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Every Glyph pool on Unichain, streaming through one registry — and one cross-pool sensor.
+            Every Glyph pool reports into one registry. What you see here is the pools&apos; shared
+            memory, updating as people trade.
           </p>
         </div>
-        <span className="flex items-center gap-2 rounded-full border border-black/10 px-3 py-1 text-xs text-zinc-500 dark:border-white/10">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" /> Unichain Sepolia · 1301
+        <span className="flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-xs text-zinc-500">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          </span>
+          streaming on chain
         </span>
       </div>
 
       {!configured && (
-        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-          No contract address configured. Set <code className="font-mono">NEXT_PUBLIC_REGISTRY_ADDRESS</code> and{" "}
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm break-words text-amber-700 dark:text-amber-300">
+          Not connected yet. Set <code className="font-mono">NEXT_PUBLIC_REGISTRY_ADDRESS</code> and{" "}
           <code className="font-mono">NEXT_PUBLIC_HOOK_ADDRESS</code> in{" "}
-          <code className="font-mono">frontend/.env.local</code> to go live. The UI below updates the moment events arrive.
+          <code className="font-mono">frontend/.env.local</code> and this page comes alive on its own.
         </div>
       )}
+
+      {mounted && address && <YourWallet address={address} />}
 
       <PoolStats donations={donations} toxicCount={toxicTrades.length} flaggedCount={scores.length} />
 
@@ -41,5 +81,38 @@ export default function DashboardPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+/** The connected visitor's own standing: their live score and the fee they'd pay. */
+function YourWallet({ address }: { address: `0x${string}` }) {
+  const { score, isLoading } = useReputationScore(address);
+  const s = score ?? 0;
+  const risk = riskOf(s);
+
+  return (
+    <section className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-4">
+      <div className="min-w-0">
+        <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">Your wallet</p>
+        <p className="mt-1 truncate font-mono text-sm">{shortAddr(address)}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div>
+          <p className="text-xs text-zinc-400">Reputation</p>
+          <p className="text-lg font-semibold tabular-nums">
+            {isLoading ? "…" : `${s} / 10,000`}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-zinc-400">Fee you&apos;d pay</p>
+          <p className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {isLoading ? "…" : feePct(s)}
+          </p>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize ring-1 ${riskRing[risk]}`}>
+          {risk}
+        </span>
+      </div>
+    </section>
   );
 }
