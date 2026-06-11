@@ -136,15 +136,15 @@ Deployment gives you **Tier 1** immediately. Tiers 2–3 are built but not yet a
 
 ### Roadmap to "fully functional"
 
-| Phase | Work | Owner | Unlocks |
-|---|---|---|---|
-| 0 (gate) | Deploy §4 | **P1** | Tier 1 live |
-| 1 | Wire frontend + bots; scripted demo | P2 | Demo-able |
-| 2 | Detector **keeper loop** (watch swaps → model → submit) | P2 | Autonomous scoring |
-| 3 | GlyphReactive on **Lasna** + subscribe + fund | P2/P1 | Cross-pool reputation |
-| 4 *(prod)* | Real price-impact feature + retrain on real MEV; Pyth feeds for on-chain auto-flag; live Brevis proof | P2 | Production-grade |
+| Phase | Work | Owner | Unlocks | Status |
+|---|---|---|---|---|
+| 0 (gate) | Deploy §4 | **P1** | Tier 1 live | ✅ done 2026-06-08 (`docs/DEPLOYMENT.md`) |
+| 1 | Wire frontend + bots; scripted demo | P2 | Demo-able | ✅ done 2026-06-10 — bots verified live on testnet |
+| 2 | Detector **keeper loop** (watch swaps → model → submit) | P2 | Autonomous scoring | ✅ done 2026-06-10 — `ai/detector/keeper.py`, verified live (flagged the attacker bot 0 → 8000 mid-burst) |
+| 3 | GlyphReactive on **Lasna** + subscribe + fund | P2/P1 | Cross-pool reputation | ✅ deployed by P1 (2 lREACT, subscribed) |
+| 4 *(prod)* | Real price-impact feature + retrain on real MEV; Pyth feeds for on-chain auto-flag; live Brevis proof | P2 | Production-grade | 🔲 open |
 
-Phases 0–1 = a winning hackathon demo. Phases 2–3 = autonomous. Phase 4 = production hardening.
+Phases 0–3 are live. Phase 4 = production hardening.
 
 ---
 
