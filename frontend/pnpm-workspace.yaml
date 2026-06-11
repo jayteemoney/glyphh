@@ -4,3 +4,4 @@ allowBuilds:
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
+verifyDepsBeforeRun: false
