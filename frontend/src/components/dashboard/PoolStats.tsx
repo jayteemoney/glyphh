@@ -17,7 +17,7 @@ export function PoolStats({
     <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
       <Stat label="LP donated (t0)" value={fmt(sum0)} accent="emerald" />
       <Stat label="LP donated (t1)" value={fmt(sum1)} accent="emerald" />
-      <Stat label="Toxic trades" value={String(toxicCount)} accent="red" />
+      <Stat label="Toxic flags" value={String(toxicCount)} accent="red" />
       <Stat label="Flagged wallets" value={String(flaggedCount)} accent="amber" />
     </section>
   );
@@ -38,7 +38,7 @@ const accents: Record<string, string> = {
 
 function Stat({ label, value, accent }: { label: string; value: string; accent: string }) {
   return (
-    <div className="rounded-2xl border border-black/10 bg-white/60 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/3">
+    <div className="card card-hover rounded-2xl p-4">
       <p className="text-xs uppercase tracking-wider text-zinc-400">{label}</p>
       <p className={`mt-1 text-2xl font-semibold tabular-nums ${accents[accent]}`}>{value}</p>
     </div>
