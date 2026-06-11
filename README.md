@@ -8,6 +8,8 @@ arbitrageurs, MEV bots — pay up to 10%, with the **excess donated directly bac
 flagged in one pool is guarded against in *every* Glyph pool within seconds.
 
 > UHI9 / Atrium hookathon submission.
+> **Full written case — problem, solution, ecosystem gap, positioning, and UHI judging
+> alignment — in [`docs/`](docs/README.md).**
 
 ---
 
@@ -110,6 +112,7 @@ demo/            viem bots — attacker (toxic burst) vs clean trader
 
 ai/
   detector/      Python ML detector (features → score → EIP-712 attestation)
+                 keeper.py — autonomous loop: watch swaps → score → auto-submit
   brevis/        Brevis ZK circuit (Go) + on-chain consumer for proven history
 ```
 
@@ -172,17 +175,34 @@ python -m detector.run --wallet 0xABCD... --verbose         # dry run, prints at
 python -m detector.run --wallet 0xABCD... --submit          # sign + submit on-chain
 ```
 
+### Autonomous keeper (detector loop)
+
+The keeper closes the loop: it watches the v4 PoolManager for swaps in the Glyph pool,
+scores each active wallet (ML model + a directional-burst rule), and auto-submits a signed
+attestation the moment behaviour turns toxic — no human in the loop:
+
+```bash
+cd ai
+cp .env.example .env         # fill addresses from docs/DEPLOYMENT.md + attestor key
+python -m detector.keeper    # leave running; flags toxic wallets within seconds
+```
+
 ---
 
 ## Deployments
 
+Live on testnet — full details, pool parameters, and verification txs in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 | Contract | Network | Address |
 |---|---|---|
-| ReputationRegistry | Unichain Sepolia | `TBD` |
-| GlyphHook | Unichain Sepolia | `TBD` |
-| GlyphCallbackAdapter | Unichain Sepolia | `TBD` |
-| GlyphReactive (RSC) | Reactive Kopli | `TBD` |
-| Brevis verifier app | Kopli | `TBD` |
+| ReputationRegistry | Unichain Sepolia | `0x1719152d54f265296D31bF2D878C58b65fe01968` |
+| GlyphHook | Unichain Sepolia | `0x8B1b1d3640aF4623d4EeF56B1C4f70b9aaA680c0` |
+| GlyphCallbackAdapter | Unichain Sepolia | `0xC0Cd92eDdc8e21412B6f10F24d1e2fe98e4f68EC` |
+| MockERC20 GLYPH-A / GLYPH-B | Unichain Sepolia | `0x2762…cA69` / `0xCAF1…3Aa7` |
+| PoolSwapTest router | Unichain Sepolia | `0xE145Ba916B2DeA640ad1f0582a90859C1e361267` |
+| GlyphReactive (RSC) | Reactive Lasna | `0x27621742e15B70Cb7794c2fDd4EA25D1b931cA69` |
+| Brevis verifier app | — | `TBD` (circuit built, no live proof yet) |
 
 ---
 
