@@ -110,22 +110,21 @@ def fetch_current_nonce(wallet: str) -> int:
 def _fetch_swap_events(
     w3: Web3, wallet: str, from_block: int, to_block: int
 ) -> list[LogReceipt]:
-    hook_addr = os.environ.get("HOOK_ADDRESS", "")
-    if not hook_addr:
+    # Swap events live on the v4 PoolManager (the hook never emits Swap itself);
+    # we scan them all and attribute each to the transaction's EOA sender.
+    pm_addr = os.environ.get("POOL_MANAGER_ADDRESS", "")
+    if not pm_addr:
         return []
 
-    # Swap events from Uniswap v4 PoolManager — topic1 = sender (the hook routes as sender)
-    # We filter by the hook address; wallet matching is done via tx.origin in the hook itself.
-    # For off-chain purposes we scan all Swap events on the hook and filter by tx sender.
     swap_topic = Web3.keccak(
-        text="Swap(address,address,int256,int256,uint160,uint128,int24)"
+        text="Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)"
     ).hex()
 
     try:
         logs = w3.eth.get_logs({
             "fromBlock": from_block,
             "toBlock":   to_block,
-            "address":   Web3.to_checksum_address(hook_addr),
+            "address":   Web3.to_checksum_address(pm_addr),
             "topics":    [swap_topic],
         })
         # Filter for transactions originating from our wallet
