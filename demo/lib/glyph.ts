@@ -230,6 +230,22 @@ export function logScore(label: string, score: number): void {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export { sleep };
 
+// The public Unichain Sepolia RPC is load-balanced across nodes whose pending-nonce
+// views lag each other, so letting viem fetch the nonce per-tx intermittently fails
+// with "nonce too low". Track nonces locally: seed from the freshest chain view, then
+// increment per send.
+const nonces = new Map<Address, number>();
+
+async function nonceFor(address: Address): Promise<number> {
+  const [latest, pending] = await Promise.all([
+    publicClient.getTransactionCount({ address, blockTag: "latest" }),
+    publicClient.getTransactionCount({ address, blockTag: "pending" }),
+  ]);
+  const next = Math.max(latest, pending, nonces.get(address) ?? 0);
+  nonces.set(address, next + 1);
+  return next;
+}
+
 /**
  * Send one exact-input swap through the PoolSwapTest router and wait for the receipt.
  * `zeroForOne` direction alternates per call so the demo stays roughly balanced.
@@ -264,6 +280,7 @@ export async function doSwap(opts: {
     functionName: "swap",
     args: [key, params, testSettings, "0x"],
     value,
+    nonce: await nonceFor(account.address),
   });
   await publicClient.waitForTransactionReceipt({ hash });
   return hash;
@@ -291,6 +308,7 @@ export async function ensureApprovals(
         abi: erc20Abi,
         functionName: "approve",
         args: [SWAP_ROUTER_ADDRESS, MAX],
+        nonce: await nonceFor(account.address),
       });
       await publicClient.waitForTransactionReceipt({ hash });
       console.log(`  approved ${currency} → router`);
