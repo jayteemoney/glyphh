@@ -23,23 +23,34 @@ import {IReputationRegistry} from "../interfaces/IReputationRegistry.sol";
 contract GlyphReactive is AbstractReactive {
     // ── Constants ─────────────────────────────────────────────────────────────
 
-    /// @dev topic0 of ToxicTradeReported(address indexed wallet, address indexed pool, uint16 localSeverity, uint256 timestamp)
-    uint256 private constant TOXIC_TRADE_TOPIC_0 =
-        uint256(keccak256("ToxicTradeReported(address,address,uint16,uint256)"));
+    /// @dev topic0 of ToxicSwapReported(address indexed wallet, bytes32 indexed poolId, uint16 severity, uint256 timestamp)
+    ///      v2 subscribes to the pool-aware event. v1's ToxicTradeReported passed the *hook's*
+    ///      address where the pool belonged, so every pool behind one hook was indistinguishable
+    ///      here and "cross-pool" aggregation was really "repeat offences somewhere".
+    uint256 private constant TOXIC_SWAP_TOPIC_0 =
+        uint256(keccak256("ToxicSwapReported(address,bytes32,uint16,uint256)"));
 
     uint64 public constant CALLBACK_GAS_LIMIT = 200_000;
     uint32 public constant MAX_AGGREGATE_COUNT = 1_000;
     /// @notice Average severity (0..10_000) at/above which a wallet is propagated cross-pool.
     uint16 public constant DISPATCH_THRESHOLD = 500;
+
+    /// @notice Distinct pools a wallet must be toxic in before anything is propagated.
+    /// @dev    The whole premise is "every pool is a sensor for every other". A wallet flagged
+    ///         five times in one pool is a single-pool problem that pool's own hook already
+    ///         priced — propagating it buys nothing and burns REACT on a callback. Requiring two
+    ///         distinct pools makes the cross-pool claim mean what it says.
+    uint8 public constant MIN_DISTINCT_POOLS = 2;
     uint16 public constant MAX_SCORE = 10_000;
 
     // ── Storage ───────────────────────────────────────────────────────────────
 
     struct Aggregate {
         uint32 count; // number of toxic reports seen across all pools
-        uint64 scoreSum; // saturating sum of localSeverity
+        uint64 scoreSum; // saturating sum of severity
         uint64 lastUpdated; // block.timestamp of the last report
         uint16 lastDispatched; // last score pushed cross-pool (dispatch hysteresis)
+        uint16 distinctPools; // how many different pools have reported this wallet
     }
 
     uint256 public immutable originChainId; // chain that emits ToxicTradeReported (e.g. Unichain Sepolia)
@@ -51,9 +62,14 @@ contract GlyphReactive is AbstractReactive {
     bool public paused;
     mapping(address => Aggregate) public aggregates;
 
+    /// @dev wallet => poolId => already counted. Keeps `distinctPools` a set cardinality
+    ///      rather than a report tally.
+    mapping(address => mapping(bytes32 => bool)) public seenInPool;
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     event AggregateUpdated(address indexed wallet, uint64 scoreSum, uint32 count, uint16 avgSeverity);
+    event PoolObserved(address indexed wallet, bytes32 indexed poolId, uint16 distinctPools);
     event CrossPoolDispatch(address indexed wallet, uint16 aggregateScore);
     event Subscribed(uint256 indexed chainId, address indexed registry);
     event PausedSet(bool paused);
@@ -77,7 +93,7 @@ contract GlyphReactive is AbstractReactive {
         // Subscribe only on the Reactive Network instance; the ReactVM copy must not.
         if (!vm) {
             service.subscribe(
-                _originChainId, _registry, TOXIC_TRADE_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+                _originChainId, _registry, TOXIC_SWAP_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
             emit Subscribed(_originChainId, _registry);
         }
@@ -90,11 +106,12 @@ contract GlyphReactive is AbstractReactive {
         // Defensive filtering — only our event, from our registry, on our origin chain.
         if (log.chain_id != originChainId) return;
         if (log._contract != registry) return;
-        if (log.topic_0 != TOXIC_TRADE_TOPIC_0) return;
+        if (log.topic_0 != TOXIC_SWAP_TOPIC_0) return;
         if (log.data.length < 32) return;
 
         address wallet = address(uint160(log.topic_1)); // indexed wallet
-        uint16 localSeverity = uint16(uint256(bytes32(log.data[0:32]))); // first non-indexed data word
+        bytes32 poolId = bytes32(log.topic_2); // indexed poolId
+        uint16 severity = uint16(uint256(bytes32(log.data[0:32]))); // first non-indexed data word
 
         Aggregate storage agg = aggregates[wallet];
         if (agg.count < MAX_AGGREGATE_COUNT) {
@@ -103,7 +120,15 @@ contract GlyphReactive is AbstractReactive {
             }
         }
 
-        uint64 newSum = agg.scoreSum + localSeverity;
+        if (!seenInPool[wallet][poolId]) {
+            seenInPool[wallet][poolId] = true;
+            unchecked {
+                agg.distinctPools += 1;
+            }
+            emit PoolObserved(wallet, poolId, agg.distinctPools);
+        }
+
+        uint64 newSum = agg.scoreSum + severity;
         if (newSum < agg.scoreSum) newSum = type(uint64).max; // saturate, never wrap
         agg.scoreSum = newSum;
         agg.lastUpdated = uint64(block.timestamp);
@@ -113,9 +138,14 @@ contract GlyphReactive is AbstractReactive {
 
         emit AggregateUpdated(wallet, agg.scoreSum, agg.count, aggregateScore);
 
-        // Dispatch only when above threshold AND strictly higher than the last dispatch.
-        // Hysteresis avoids spamming callbacks (real REACT cost) for an already-flagged wallet.
-        if (!paused && aggregateScore >= DISPATCH_THRESHOLD && aggregateScore > agg.lastDispatched) {
+        // Three conditions, all necessary. Above the severity threshold; strictly higher than
+        // the last dispatch, so an already-flagged wallet does not spam callbacks at real REACT
+        // cost; and seen in at least two distinct pools, so this is genuinely cross-pool
+        // intelligence rather than one pool's local problem being broadcast.
+        if (
+            !paused && aggregateScore >= DISPATCH_THRESHOLD && aggregateScore > agg.lastDispatched
+                && agg.distinctPools >= MIN_DISTINCT_POOLS
+        ) {
             agg.lastDispatched = aggregateScore;
             _dispatch(wallet, aggregateScore);
         }
@@ -131,14 +161,14 @@ contract GlyphReactive is AbstractReactive {
     /// @notice Re-establish the subscription if it was dropped (ops escape hatch).
     function subscribe() external onlyOwner rnOnly {
         service.subscribe(
-            originChainId, registry, TOXIC_TRADE_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+            originChainId, registry, TOXIC_SWAP_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
         );
         emit Subscribed(originChainId, registry);
     }
 
     function unsubscribe() external onlyOwner rnOnly {
         service.unsubscribe(
-            originChainId, registry, TOXIC_TRADE_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+            originChainId, registry, TOXIC_SWAP_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
         );
     }
 

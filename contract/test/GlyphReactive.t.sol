@@ -17,10 +17,10 @@ contract GlyphReactiveTest is Test {
     address constant REGISTRY = address(0xdeadbeef);
     address constant ADAPTER = address(0xad);
     address constant WALLET = address(0xB0B);
-    address constant POOL_A = address(0xA1);
-    address constant POOL_B = address(0xA2);
+    bytes32 constant POOL_A = keccak256("POOL_A");
+    bytes32 constant POOL_B = keccak256("POOL_B");
 
-    uint256 constant TOXIC_TOPIC0 = uint256(keccak256("ToxicTradeReported(address,address,uint16,uint256)"));
+    uint256 constant TOXIC_TOPIC0 = uint256(keccak256("ToxicSwapReported(address,bytes32,uint16,uint256)"));
 
     GlyphReactive reactive;
 
@@ -30,7 +30,7 @@ contract GlyphReactiveTest is Test {
 
     // ── Helpers ────────────────────────────────────────────────────────────────
 
-    function _log(address contract_, uint256 chainId, address wallet, address pool, uint16 severity)
+    function _log(address contract_, uint256 chainId, address wallet, bytes32 poolId, uint16 severity)
         internal
         view
         returns (IReactive.LogRecord memory log)
@@ -39,7 +39,7 @@ contract GlyphReactiveTest is Test {
         log._contract = contract_;
         log.topic_0 = TOXIC_TOPIC0;
         log.topic_1 = uint256(uint160(wallet));
-        log.topic_2 = uint256(uint160(pool));
+        log.topic_2 = uint256(poolId);
         log.data = abi.encode(severity, uint256(block.timestamp));
         log.block_number = block.number;
     }
@@ -48,7 +48,7 @@ contract GlyphReactiveTest is Test {
 
     function test_react_aggregatesSeverity() public {
         reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 400));
-        (uint32 count, uint64 sum,, uint16 lastDispatched) = reactive.aggregates(WALLET);
+        (uint32 count, uint64 sum,, uint16 lastDispatched,) = reactive.aggregates(WALLET);
         assertEq(count, 1);
         assertEq(sum, 400);
         // 400 avg < DISPATCH_THRESHOLD (500) → no dispatch yet
@@ -56,9 +56,10 @@ contract GlyphReactiveTest is Test {
     }
 
     function test_react_dispatchesWhenThresholdCrossed() public {
-        // First report below threshold: avg 400 < 500 → aggregated but not dispatched.
+        // First report below threshold: avg 400 < 500 → aggregated but not dispatched. It is
+        // also a single pool, which on its own would hold the dispatch back regardless.
         reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 400));
-        (,,, uint16 d0) = reactive.aggregates(WALLET);
+        (,,, uint16 d0,) = reactive.aggregates(WALLET);
         assertEq(d0, 0);
 
         // Second report lifts avg to (400+800)/2 = 600 ≥ 500 → cross-pool dispatch.
@@ -66,25 +67,68 @@ contract GlyphReactiveTest is Test {
         emit GlyphReactive.CrossPoolDispatch(WALLET, 600);
         reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_B, 800));
 
-        (,,, uint16 d1) = reactive.aggregates(WALLET);
+        (,,, uint16 d1,) = reactive.aggregates(WALLET);
         assertEq(d1, 600);
     }
 
     function test_react_emitsCallbackToAdapter() public {
-        // One max-severity report → avg 10_000 → dispatch with a Reactive Callback.
+        // Needs two distinct pools: one pool's problem is that pool's own to price.
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 10_000));
+
         bytes memory payload =
             abi.encodeWithSignature("glyphCallback(address,address,uint16)", address(0), WALLET, uint16(10_000));
         vm.expectEmit(true, true, true, true);
         emit IReactive.Callback(DEST_CHAIN, ADAPTER, reactive.CALLBACK_GAS_LIMIT(), payload);
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_B, 10_000));
+    }
+
+    // ── Distinct-pool gate ───────────────────────────────────────────────────────
+
+    /// @dev The claim is "every pool is a sensor for every other". v1 could not actually tell
+    ///      pools apart -- the hook passed its own address where the pool belonged -- so
+    ///      repeat offences in a single pool looked like cross-pool activity and triggered a
+    ///      callback that bought nothing and cost real REACT.
+    function test_react_singlePoolNeverDispatches() public {
+        for (uint256 i = 0; i < 5; i++) {
+            reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 10_000));
+        }
+        (,,, uint16 lastDispatched, uint16 distinctPools) = reactive.aggregates(WALLET);
+        assertEq(distinctPools, 1, "one pool seen");
+        assertEq(lastDispatched, 0, "must not propagate a single pool's local problem");
+    }
+
+    function test_react_secondPoolUnlocksDispatch() public {
         reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 10_000));
+        (,,, uint16 before,) = reactive.aggregates(WALLET);
+        assertEq(before, 0);
+
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_B, 10_000));
+        (,,, uint16 afterSecond, uint16 distinctPools) = reactive.aggregates(WALLET);
+        assertEq(distinctPools, 2);
+        assertEq(afterSecond, 10_000);
+    }
+
+    function test_react_distinctPoolsIsSetCardinality() public {
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 100));
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 100));
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 100));
+        (,,,, uint16 distinctPools) = reactive.aggregates(WALLET);
+        assertEq(distinctPools, 1, "repeat reports in one pool must not inflate the count");
+    }
+
+    function test_react_emitsPoolObserved() public {
+        vm.expectEmit(true, true, false, true);
+        emit GlyphReactive.PoolObserved(WALLET, POOL_A, 1);
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 100));
     }
 
     function test_react_hysteresis_noRedispatchAtSameLevel() public {
-        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 10_000)); // dispatch @ 10_000
-        // Another 10_000: avg stays 10_000, not strictly greater than lastDispatched → no dispatch.
-        // (No expectEmit of CrossPoolDispatch; we assert lastDispatched is unchanged.)
-        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_B, 10_000));
-        (,,, uint16 lastDispatched) = reactive.aggregates(WALLET);
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 10_000)); // pool 1, no dispatch yet
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_B, 10_000)); // pool 2, dispatch @ 10_000
+        // A third report keeps avg at 10_000, which is not strictly greater than lastDispatched,
+        // so no further callback fires -- the hysteresis that keeps REACT costs bounded.
+        reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, keccak256("POOL_C"), 10_000));
+        (,,, uint16 lastDispatched,) = reactive.aggregates(WALLET);
         assertEq(lastDispatched, 10_000);
     }
 
@@ -92,13 +136,13 @@ contract GlyphReactiveTest is Test {
 
     function test_react_ignoresWrongChain() public {
         reactive.react(_log(REGISTRY, 999, WALLET, POOL_A, 10_000));
-        (uint32 count,,,) = reactive.aggregates(WALLET);
+        (uint32 count,,,,) = reactive.aggregates(WALLET);
         assertEq(count, 0);
     }
 
     function test_react_ignoresWrongContract() public {
         reactive.react(_log(address(0xDEAD), ORIGIN_CHAIN, WALLET, POOL_A, 10_000));
-        (uint32 count,,,) = reactive.aggregates(WALLET);
+        (uint32 count,,,,) = reactive.aggregates(WALLET);
         assertEq(count, 0);
     }
 
@@ -107,7 +151,7 @@ contract GlyphReactiveTest is Test {
         for (uint256 i = 0; i < 5; i++) {
             reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 100));
         }
-        (uint32 count, uint64 sum,,) = reactive.aggregates(WALLET);
+        (uint32 count, uint64 sum,,,) = reactive.aggregates(WALLET);
         assertEq(count, 5);
         assertEq(sum, 500);
     }
@@ -117,7 +161,7 @@ contract GlyphReactiveTest is Test {
     function test_setPaused_blocksDispatch() public {
         reactive.setPaused(true);
         reactive.react(_log(REGISTRY, ORIGIN_CHAIN, WALLET, POOL_A, 10_000));
-        (,,, uint16 lastDispatched) = reactive.aggregates(WALLET);
+        (,,, uint16 lastDispatched,) = reactive.aggregates(WALLET);
         assertEq(lastDispatched, 0); // aggregated but not dispatched
     }
 
