@@ -1,24 +1,37 @@
 import { formatUnits } from "viem";
-import type { Donation } from "@/hooks/useGlyphEvents";
+import type { Sandwich } from "@/hooks/useGlyphEvents";
 
+/**
+ * The four numbers that say what the pool did, not what it is.
+ *
+ * v1 showed LP donations here. v2 does not have them: the premium reaches LPs through
+ * v4's dynamic fee override as fee growth, which is the correct mechanism but is not an
+ * event to count. What *is* countable, and more interesting, is the money returned to
+ * sandwiched traders — the thing that separates this from a hook that merely charges
+ * attackers more.
+ */
 export function PoolStats({
-  donations,
+  sandwiches,
   toxicCount,
-  flaggedCount,
+  crossPoolCount,
 }: {
-  donations: Donation[];
+  sandwiches: Sandwich[];
   toxicCount: number;
-  flaggedCount: number;
+  crossPoolCount: number;
 }) {
-  const sum0 = donations.reduce((a, d) => a + d.amount0, BigInt(0));
-  const sum1 = donations.reduce((a, d) => a + d.amount1, BigInt(0));
+  const rebated = sandwiches.reduce((a, s) => a + s.rebate, BigInt(0));
 
   return (
     <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-      <Stat label="LP donated (t0)" value={fmt(sum0)} accent="emerald" />
-      <Stat label="LP donated (t1)" value={fmt(sum1)} accent="emerald" />
-      <Stat label="Toxic flags" value={String(toxicCount)} accent="red" />
-      <Stat label="Flagged wallets" value={String(flaggedCount)} accent="amber" />
+      <Stat label="Returned to victims" value={fmt(rebated)} accent="emerald" />
+      <Stat label="Sandwiches caught" value={String(sandwiches.length)} accent="red" />
+      <Stat label="Toxic flags" value={String(toxicCount)} accent="amber" />
+      <Stat
+        label="Flagged in 2+ pools"
+        value={String(crossPoolCount)}
+        accent="amber"
+        hint="Wallets the cross-pool layer propagates"
+      />
     </section>
   );
 }
@@ -36,9 +49,19 @@ const accents: Record<string, string> = {
   amber: "text-amber-500",
 };
 
-function Stat({ label, value, accent }: { label: string; value: string; accent: string }) {
+function Stat({
+  label,
+  value,
+  accent,
+  hint,
+}: {
+  label: string;
+  value: string;
+  accent: string;
+  hint?: string;
+}) {
   return (
-    <div className="card card-hover rounded-2xl p-4">
+    <div className="card card-hover rounded-2xl p-4" title={hint}>
       <p className="text-xs uppercase tracking-wider text-zinc-400">{label}</p>
       <p className={`mt-1 text-2xl font-semibold tabular-nums ${accents[accent]}`}>{value}</p>
     </div>

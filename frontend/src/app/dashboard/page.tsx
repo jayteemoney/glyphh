@@ -1,21 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
+import { useMounted } from "@/hooks/useMounted";
 import { useGlyphEvents } from "@/hooks/useGlyphEvents";
+import { useFeeQuotes } from "@/hooks/useFeeQuotes";
 import { useReputationScore } from "@/hooks/useReputationScore";
 import { ScoreTable } from "@/components/dashboard/ScoreTable";
 import { ToxicTradesFeed } from "@/components/dashboard/ToxicTradesFeed";
 import { PoolStats } from "@/components/dashboard/PoolStats";
+import { FeeBreakdown } from "@/components/dashboard/FeeBreakdown";
+import { RebateCard } from "@/components/dashboard/RebateCard";
 import { ConnectButton } from "@/components/ConnectButton";
-import { feePct, riskOf, riskRing, shortAddr } from "@/lib/format";
+import { quoteFeePct, riskOf, riskRing, shortAddr } from "@/lib/format";
 
 export default function DashboardPage() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const { address, isConnected } = useAccount();
-  const { scores, toxicTrades, donations, configured } = useGlyphEvents();
+  const { scores, toxicTrades, sandwiches, poolsByWallet, configured } = useGlyphEvents();
+  const { quotes } = useFeeQuotes();
+  const crossPoolCount = Object.values(poolsByWallet).filter((n) => n >= 2).length;
 
   // The dashboard opens with a connected wallet. Until then, the door.
   if (mounted && !isConnected) {
@@ -47,8 +51,8 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Live reputation dashboard</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Every Glyph pool reports into one registry. What you see here is the pools&apos; shared
-            memory, updating as people trade.
+            Glyph prices a swap by what it does to the pool, not by who sent it. Below is every
+            fee the hook quoted, broken into the terms that produced it.
           </p>
         </div>
         <span className="flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-xs text-zinc-500">
@@ -70,15 +74,27 @@ export default function DashboardPage() {
 
       {mounted && address && <YourWallet address={address} />}
 
-      <PoolStats donations={donations} toxicCount={toxicTrades.length} flaggedCount={scores.length} />
+      <div className="mb-6">
+        <RebateCard />
+      </div>
+
+      <PoolStats
+        sandwiches={sandwiches}
+        toxicCount={toxicTrades.length}
+        crossPoolCount={crossPoolCount}
+      />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <ScoreTable scores={scores} />
+          <FeeBreakdown quotes={quotes} />
         </div>
         <div className="lg:col-span-1">
           <ToxicTradesFeed trades={toxicTrades} />
         </div>
+      </div>
+
+      <div className="mt-6">
+        <ScoreTable scores={scores} poolsByWallet={poolsByWallet} />
       </div>
     </main>
   );
@@ -86,8 +102,9 @@ export default function DashboardPage() {
 
 /** The connected visitor's own standing: their live score and the fee they'd pay. */
 function YourWallet({ address }: { address: `0x${string}` }) {
-  const { score, isLoading } = useReputationScore(address);
+  const { score, trust, isLoading } = useReputationScore(address);
   const s = score ?? 0;
+  const t = trust ?? 0;
   const risk = riskOf(s);
 
   return (
@@ -104,9 +121,15 @@ function YourWallet({ address }: { address: `0x${string}` }) {
           </p>
         </div>
         <div>
-          <p className="text-xs text-zinc-400">Fee you&apos;d pay</p>
+          <p className="text-xs text-zinc-400">Earned trust</p>
+          <p className="text-lg font-semibold tabular-nums">
+            {isLoading ? "…" : `${t} / 10,000`}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-zinc-400">Fee on an ordinary swap</p>
           <p className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-            {isLoading ? "…" : feePct(s)}
+            {isLoading ? "…" : quoteFeePct(s, t)}
           </p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize ring-1 ${riskRing[risk]}`}>

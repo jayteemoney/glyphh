@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useMounted } from "@/hooks/useMounted";
 import { useRouter } from "next/navigation";
 import { useAccount, useConnect } from "wagmi";
 
@@ -16,8 +17,7 @@ export function WalletCTA({
   connectedLabel?: string;
   disconnectedLabel?: string;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const router = useRouter();
   const { isConnected } = useAccount();

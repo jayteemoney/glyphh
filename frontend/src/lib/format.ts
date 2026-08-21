@@ -1,5 +1,11 @@
-// Mirror of the on-chain ToxicityScoring.scoreToFee curve, so the dashboard previews
-// the exact fee a wallet would pay. Fee units are Uniswap pips (1_000_000 = 100%).
+// Mirror of the on-chain FlowRisk model, so the dashboard previews the exact fee the hook
+// would quote. Fee units are Uniswap pips (1_000_000 = 100%).
+//
+// Kept deliberately in step with contract/src/libraries/FlowRisk.sol. The two terms that
+// depend on the swap itself -- the arbitrage premium and the unproven-size premium -- are
+// not previewable here, because they depend on oracle divergence and swap size rather than
+// on the wallet. What this previews is the fee for an *ordinary* swap: base, plus whatever
+// toxicity the wallet carries, less whatever trust it has earned.
 
 export function scoreToFeeUnits(score: number): number {
   if (score <= 0) return 3_000;
@@ -11,6 +17,28 @@ export function scoreToFeeUnits(score: number): number {
 
 export function feePct(score: number): string {
   return (scoreToFeeUnits(score) / 10_000).toFixed(2) + "%";
+}
+
+export const FLOOR_FEE = 500; // 0.05% -- what maximal trust reaches
+export const BASE_FEE = 3_000; // 0.30%
+export const MAX_FEE = 100_000; // 10.00%
+
+/** Trust buys the fee down from base toward the floor, linearly. */
+export function trustDiscountUnits(trust: number): number {
+  if (trust <= 0) return 0;
+  if (trust >= 10_000) return BASE_FEE - FLOOR_FEE;
+  return Math.round((trust * (BASE_FEE - FLOOR_FEE)) / 10_000);
+}
+
+/** Fee an ordinary swap from this wallet would pay: base + toxicity - trust. */
+export function quoteFeeUnits(score: number, trust: number): number {
+  const toxicPremium = scoreToFeeUnits(score) - BASE_FEE;
+  const fee = BASE_FEE + toxicPremium - trustDiscountUnits(trust);
+  return Math.min(MAX_FEE, Math.max(FLOOR_FEE, fee));
+}
+
+export function quoteFeePct(score: number, trust: number): string {
+  return (quoteFeeUnits(score, trust) / 10_000).toFixed(2) + "%";
 }
 
 export type Risk = "clean" | "low" | "medium" | "high";

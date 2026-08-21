@@ -29,7 +29,7 @@ export function ToxicTradesFeed({ trades }: { trades: ToxicTrade[] }) {
               <div className="min-w-0">
                 <p className="truncate font-mono text-xs text-zinc-700 dark:text-zinc-200">{shortAddr(t.wallet)}</p>
                 <p className="truncate text-[11px] text-zinc-400">
-                  {t.source === "detector" ? "detector flag" : `pool ${shortAddr(t.pool)}`} · {timeAgo(t.timestamp)}
+                  {t.source === "detector" ? "detector flag" : `pool ${shortAddr(t.poolId)}`} · {timeAgo(t.timestamp)}
                 </p>
               </div>
               <span

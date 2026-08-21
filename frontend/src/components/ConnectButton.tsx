@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain } from "wagmi";
+import { useMounted } from "@/hooks/useMounted";
 import { unichainSepolia } from "@/lib/wagmi";
 import { shortAddr } from "@/lib/format";
 
@@ -11,8 +11,7 @@ import { shortAddr } from "@/lib/format";
  * on the wrong network gets a one-click switch instead.
  */
 export function ConnectButton({ size = "sm" }: { size?: "sm" | "lg" }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
