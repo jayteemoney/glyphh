@@ -10,6 +10,7 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -77,10 +78,18 @@ contract DemoSetup is Script {
         console2.log("PoolSwapTest (SWAP_ROUTER):", address(swapRouter));
         console2.log("PoolModifyLiquidityTest:   ", address(lpRouter));
 
-        // 2. Initialize the pool if DeployGlyph didn't already (idempotent).
-        try IPoolManager(poolManager).initialize(key, TickMath.getSqrtPriceAtTick(0)) {
+        // 2. Initialize the pool if DeployGlyph didn't already.
+        //
+        // Checked with getSlot0 rather than wrapped in try/catch. A try/catch is idempotent
+        // during *simulation*, but forge still records the call as a transaction to broadcast,
+        // and it then reverts on-chain with PoolAlreadyInitialized (0x7983c051) -- failing the
+        // whole run after every other step had already succeeded. Reading state first means
+        // the call is never recorded in the first place.
+        (uint160 existingSqrtPrice,,,) = StateLibrary.getSlot0(IPoolManager(poolManager), key.toId());
+        if (existingSqrtPrice == 0) {
+            IPoolManager(poolManager).initialize(key, TickMath.getSqrtPriceAtTick(0));
             console2.log("Pool initialized at tick 0.");
-        } catch {
+        } else {
             console2.log("Pool already initialized - continuing.");
         }
 

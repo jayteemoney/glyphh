@@ -17,9 +17,14 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 
 import {GlyphHook} from "../src/GlyphHook.sol";
+import {RebateVault} from "../src/RebateVault.sol";
+import {SettablePriceOracle} from "../src/oracles/SettablePriceOracle.sol";
+import {IRebateVault} from "../src/interfaces/IRebateVault.sol";
 import {ReputationRegistry} from "../src/ReputationRegistry.sol";
 import {GlyphCallbackAdapter} from "../src/reactive/GlyphCallbackAdapter.sol";
 import {IReputationRegistry} from "../src/interfaces/IReputationRegistry.sol";
+import {IGlyphRegistry} from "../src/interfaces/IGlyphRegistry.sol";
+import {IPriceOracle} from "../src/interfaces/IPriceOracle.sol";
 import {MockERC20} from "../src/MockERC20.sol";
 import {HookMiner} from "../test/utils/HookMiner.sol";
 
@@ -63,15 +68,22 @@ contract LocalDemo is Script {
 
         ReputationRegistry registry = new ReputationRegistry(deployer);
 
+        // A settable oracle so the demo can show the L1 arbitrage layer: move the reference
+        // price, then watch the next gap-closing swap get surcharged. Mock tokens have no real
+        // feed, and describing a layer is much weaker than demonstrating it.
+        SettablePriceOracle oracle = new SettablePriceOracle(deployer);
+
+        RebateVault vault = new RebateVault(deployer);
+
         // 2. Mine the hook salt against the CREATE2 factory (the real deployer in scripts).
-        uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG);
-        bytes memory args = abi.encode(address(manager), address(registry), address(0), deployer);
+        uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
+        bytes memory args = abi.encode(address(manager), address(registry), address(oracle), deployer);
         (address expected, bytes32 salt) = HookMiner.find(CREATE2_DEPLOYER, flags, type(GlyphHook).creationCode, args);
 
         GlyphHook hook = new GlyphHook{salt: salt}(
             IPoolManager(address(manager)),
-            IReputationRegistry(address(registry)),
-            IPyth(address(0)), // no Pyth locally — impact path returns 0, fees driven by reputation
+            IGlyphRegistry(address(registry)),
+            IPriceOracle(address(oracle)),
             deployer
         );
         require(address(hook) == expected, "hook address mismatch");
@@ -80,7 +92,11 @@ contract LocalDemo is Script {
         registry.setHook(address(hook), true);
         registry.setAttestor(deployer, true);
 
-        GlyphCallbackAdapter adapter = new GlyphCallbackAdapter(address(0), IReputationRegistry(address(registry)));
+        // Wire the rebate path so a sandwich in the demo actually pays its victim.
+        vault.setHook(address(hook), true);
+        hook.setVault(IRebateVault(address(vault)));
+
+        GlyphCallbackAdapter adapter = new GlyphCallbackAdapter(address(0), IGlyphRegistry(address(registry)));
         registry.setReactiveProxy(address(adapter));
 
         // 4. Test routers (swaps + LP).
@@ -131,5 +147,7 @@ contract LocalDemo is Script {
         console2.log("SWAP_ROUTER_ADDRESS=", address(swapRouter));
         console2.log("CURRENCY0=", address(token0));
         console2.log("CURRENCY1=", address(token1));
+        console2.log("ORACLE_ADDRESS=", address(oracle));
+        console2.log("VAULT_ADDRESS=", address(vault));
     }
 }
