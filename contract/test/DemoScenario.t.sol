@@ -11,6 +11,7 @@ import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
@@ -21,6 +22,8 @@ import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiqui
 import {GlyphHook} from "../src/GlyphHook.sol";
 import {ReputationRegistry} from "../src/ReputationRegistry.sol";
 import {IReputationRegistry} from "../src/interfaces/IReputationRegistry.sol";
+import {IGlyphRegistry} from "../src/interfaces/IGlyphRegistry.sol";
+import {IPriceOracle} from "../src/interfaces/IPriceOracle.sol";
 import {MockERC20} from "../src/MockERC20.sol";
 import {HookMiner} from "./utils/HookMiner.sol";
 
@@ -31,6 +34,8 @@ import {HookMiner} from "./utils/HookMiner.sol";
 /// base fee and never exercised the post-swap premium path — which is where the unfunded
 /// `donate()` reverted live with CurrencyNotSettled. This suite would have caught that.
 contract DemoScenarioTest is Test {
+    using StateLibrary for PoolManager;
+
     using PoolIdLibrary for PoolKey;
 
     address constant OWNER = address(0xD1);
@@ -57,11 +62,11 @@ contract DemoScenarioTest is Test {
         lpRouter = new PoolModifyLiquidityTest(manager);
         registry = new ReputationRegistry(OWNER);
 
-        uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG);
+        uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
         bytes memory args = abi.encode(address(manager), address(registry), address(0), OWNER);
         (, bytes32 salt) = HookMiner.find(address(this), flags, type(GlyphHook).creationCode, args);
         hook = new GlyphHook{salt: salt}(
-            IPoolManager(address(manager)), IReputationRegistry(address(registry)), IPyth(address(0)), OWNER
+            IPoolManager(address(manager)), IGlyphRegistry(address(registry)), IPriceOracle(address(0)), OWNER
         );
 
         vm.startPrank(OWNER);
@@ -103,52 +108,43 @@ contract DemoScenarioTest is Test {
         }
     }
 
-    /// A flagged wallet's swap must SUCCEED (the donate-debt bug reverted it) and emit
-    /// LPDonation with a positive premium — proving the premium reaches LPs.
-    function test_toxicSwap_succeedsAndPaysLPs() public {
+    /// @dev v1 asserted on an `LPDonation` event, which was only observability — the premium
+    ///      is actually paid through v4's dynamic fee override, and the event merely announced
+    ///      it. v2 asserts the thing that matters directly: a toxic swap grows the pool's LP
+    ///      fee accumulator by more than an identical clean swap does. That is the "toxic flow
+    ///      pays LPs" claim, measured rather than announced.
+    function test_toxicSwap_growsLPFeesMoreThanCleanSwap() public {
+        (uint256 cleanBefore,) = manager.getFeeGrowthGlobals(key.toId());
+        _swap(clean);
+        (uint256 cleanAfter,) = manager.getFeeGrowthGlobals(key.toId());
+        uint256 cleanGrowth = cleanAfter - cleanBefore;
+
         _scoreToxic(8_000);
 
-        vm.recordLogs();
-        // 2-arg prank: msg.sender AND tx.origin = toxic, so the hook sees the high score.
-        vm.startPrank(toxic, toxic);
-        swapRouter.swap(
-            key,
-            SwapParams({zeroForOne: true, amountSpecified: -1e15, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
-            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
-            ""
-        );
-        vm.stopPrank();
+        (uint256 toxicBefore,) = manager.getFeeGrowthGlobals(key.toId());
+        _swap(toxic);
+        (uint256 toxicAfter,) = manager.getFeeGrowthGlobals(key.toId());
+        uint256 toxicGrowth = toxicAfter - toxicBefore;
 
-        // Find the LPDonation event and assert a non-zero premium was surfaced to LPs.
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bool found;
-        for (uint256 i; i < logs.length; i++) {
-            if (logs[i].topics[0] == LPDonation.selector) {
-                (uint256 a0, uint256 a1) = abi.decode(logs[i].data, (uint256, uint256));
-                assertTrue(a0 > 0 || a1 > 0, "premium must be positive");
-                found = true;
-            }
-        }
-        assertTrue(found, "toxic swap must emit LPDonation");
+        assertGt(cleanGrowth, 0, "clean swap should still pay the base fee to LPs");
+        assertGt(toxicGrowth, cleanGrowth, "toxic flow must pay LPs more than clean flow");
     }
 
-    /// A clean wallet pays the base fee: no premium, so no LPDonation, and score stays 0.
-    function test_cleanSwap_noPremium() public {
-        vm.recordLogs();
-        vm.startPrank(clean, clean);
+    /// A clean wallet pays the base fee and accrues no toxicity.
+    function test_cleanSwap_paysBaseFeeAndStaysClean() public {
+        _swap(clean);
+        assertEq(registry.scoreOf(clean), 0);
+    }
+
+    function _swap(address who) internal {
+        // 2-arg prank: sets msg.sender AND tx.origin, so the hook resolves the intended wallet.
+        vm.prank(who, who);
         swapRouter.swap(
             key,
             SwapParams({zeroForOne: true, amountSpecified: -1e15, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
-        vm.stopPrank();
-
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i; i < logs.length; i++) {
-            assertTrue(logs[i].topics[0] != LPDonation.selector, "clean swap must not donate");
-        }
-        assertEq(registry.scoreOf(clean), 0);
     }
 
     function _scoreToxic(uint16 score) internal {
