@@ -44,3 +44,6 @@ ai/.venv/
 
 # keeper / detector replay-guard state
 .detector_state.json
+
+# ── Local team handouts (never pushed) ───────────────────────────────────────
+_local/
