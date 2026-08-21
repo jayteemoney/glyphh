@@ -26,6 +26,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--wallet", required=True, help="Wallet address to score")
     p.add_argument("--submit", action="store_true", help="Submit attestation on-chain")
     p.add_argument("--verbose", action="store_true", help="Print feature vector")
+    p.add_argument("--trust", action="store_true", help="Score earned trust instead of toxicity")
     return p.parse_args()
 
 
@@ -42,7 +43,7 @@ def main() -> None:
     # Lazy imports keep startup fast and errors local
     from detector.features import extract_features, fetch_current_nonce
     from detector.model    import score
-    from detector.attestor import sign_attestation, attestation_to_dict
+    from detector.attestor import sign_attestation, sign_trust_attestation, attestation_to_dict
 
     print(f"Scoring wallet: {wallet}")
 
@@ -58,8 +59,21 @@ def main() -> None:
     reputation_score = score(features)
     print(f"Reputation score:  {reputation_score} / 10000  ({reputation_score / 100:.2f}%)")
 
+    if args.trust:
+        from detector.features import extract_trust_features_onchain
+        from detector.trust import extract_trust_features, score_trust, explain
+
+        print("Extracting trust evidence...", flush=True)
+        raw = extract_trust_features_onchain(wallet)
+        trust_features = extract_trust_features(**raw)
+        reputation_score = score_trust(trust_features, current_toxicity=reputation_score)
+
+        print(f"Trust score:       {reputation_score} / 10000  ({reputation_score / 100:.2f}%)")
+        if args.verbose:
+            print(explain(trust_features, reputation_score))
+
     # 3. Read on-chain nonce
-    nonce = fetch_current_nonce(wallet) + 1
+    nonce = fetch_current_nonce(wallet, trust=args.trust) + 1
     print(f"Using nonce:       {nonce}")
 
     # 4. Sign attestation
@@ -67,7 +81,11 @@ def main() -> None:
         print("ERROR: ATTESTOR_PRIVATE_KEY not set in environment.", file=sys.stderr)
         sys.exit(1)
 
-    attestation = sign_attestation(wallet, reputation_score, nonce)
+    attestation = (
+        sign_trust_attestation(wallet, reputation_score, nonce)
+        if args.trust
+        else sign_attestation(wallet, reputation_score, nonce)
+    )
     attestation_dict = attestation_to_dict(attestation)
 
     print("\nAttestation:")
@@ -78,13 +96,13 @@ def main() -> None:
         from detector.safety import check_and_record
 
         check_and_record(wallet, nonce)  # replay + rate-limit guard before signing goes live
-        _submit(attestation_dict)
+        _submit(attestation_dict, trust=args.trust)
     else:
         print("\nDry-run complete. Pass --submit to send on-chain.")
 
 
-def _submit(attestation: dict) -> None:
-    """Submit the signed attestation to ReputationRegistry.updateScore()."""
+def _submit(attestation: dict, trust: bool = False) -> None:
+    """Submit the signed attestation to updateTrust() or updateScore()."""
     from web3 import Web3
 
     rpc           = os.environ.get("RPC_URL", "https://sepolia.unichain.org")
@@ -99,6 +117,25 @@ def _submit(attestation: dict) -> None:
     account = w3.eth.account.from_key(private_key)
 
     abi = [
+        {
+            "name": "updateTrust",
+            "type": "function",
+            "inputs": [
+                {
+                    "name": "attestation",
+                    "type": "tuple",
+                    "components": [
+                        {"name": "wallet",    "type": "address"},
+                        {"name": "value",     "type": "uint16"},
+                        {"name": "nonce",     "type": "uint32"},
+                        {"name": "deadline",  "type": "uint64"},
+                        {"name": "signature", "type": "bytes"},
+                    ],
+                }
+            ],
+            "outputs": [],
+            "stateMutability": "nonpayable",
+        },
         {
             "name": "updateScore",
             "type": "function",
@@ -127,7 +164,8 @@ def _submit(attestation: dict) -> None:
 
     sig_bytes = bytes.fromhex(attestation["signature"][2:])
 
-    tx = registry.functions.updateScore((
+    write_fn = registry.functions.updateTrust if trust else registry.functions.updateScore
+    tx = write_fn((
         attestation["wallet"],
         attestation["value"],
         attestation["nonce"],

@@ -1,8 +1,15 @@
 """
-attestor.py — Build and sign a Glyph score attestation using EIP-712.
+attestor.py — Build and sign Glyph attestations using EIP-712.
 
-The signed attestation matches the Solidity struct exactly:
+Two independent claims, each matching its Solidity struct exactly:
   Score(address wallet, uint16 value, uint32 nonce, uint64 deadline)
+  Trust(address wallet, uint16 value, uint32 nonce, uint64 deadline)
+
+The structs are shaped identically on purpose, and separated on purpose. They
+carry different typehashes and different nonce sequences, so a captured score
+attestation cannot be replayed as a trust attestation to buy an attacker the
+discount. `ReputationRegistry.test_scoreAttestation_cannotBeReplayedAsTrust`
+asserts the on-chain half of that guarantee.
 
 Domain:
   name:              "GlyphReputationRegistry"
@@ -38,11 +45,25 @@ class Attestation:
 
 def sign_attestation(wallet: str, score: int, nonce: int) -> Attestation:
     """
-    Sign a score attestation for *wallet* and return the Attestation dataclass.
+    Sign a *toxicity* attestation for *wallet*.
 
     Raises ValueError if the recovered signer does not match the attestor key.
     Never logs the private key.
     """
+    return _sign(wallet, score, nonce, "Score")
+
+
+def sign_trust_attestation(wallet: str, trust: int, nonce: int) -> Attestation:
+    """
+    Sign a *trust* attestation for *wallet* — the claim that buys the fee down.
+
+    Same shape as a score attestation, different primary type, so the two can
+    never be interchanged.
+    """
+    return _sign(wallet, trust, nonce, "Trust")
+
+
+def _sign(wallet: str, value: int, nonce: int, primary_type: str) -> Attestation:
     private_key = os.environ["ATTESTOR_PRIVATE_KEY"]
     account: LocalAccount = Account.from_key(private_key)
 
@@ -61,14 +82,14 @@ def sign_attestation(wallet: str, score: int, nonce: int) -> Attestation:
                 {"name": "chainId",           "type": "uint256"},
                 {"name": "verifyingContract", "type": "address"},
             ],
-            "Score": [
+            primary_type: [
                 {"name": "wallet",   "type": "address"},
                 {"name": "value",    "type": "uint16"},
                 {"name": "nonce",    "type": "uint32"},
                 {"name": "deadline", "type": "uint64"},
             ],
         },
-        "primaryType": "Score",
+        "primaryType": primary_type,
         "domain": {
             "name":              "GlyphReputationRegistry",
             "version":           "1",
@@ -77,7 +98,7 @@ def sign_attestation(wallet: str, score: int, nonce: int) -> Attestation:
         },
         "message": {
             "wallet":   wallet_cs,
-            "value":    score,
+            "value":    value,
             "nonce":    nonce,
             "deadline": deadline,
         },
@@ -99,7 +120,7 @@ def sign_attestation(wallet: str, score: int, nonce: int) -> Attestation:
 
     return Attestation(
         wallet=wallet_cs,
-        value=score,
+        value=value,
         nonce=nonce,
         deadline=deadline,
         signature=sig_bytes,

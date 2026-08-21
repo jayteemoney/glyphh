@@ -25,6 +25,23 @@ load_dotenv()
 
 _REGISTRY_ABI = [
     {
+        "name": "trustDataOf",
+        "type": "function",
+        "inputs": [{"name": "wallet", "type": "address"}],
+        "outputs": [
+            {
+                "name": "",
+                "type": "tuple",
+                "components": [
+                    {"name": "value",     "type": "uint16"},
+                    {"name": "updatedAt", "type": "uint64"},
+                    {"name": "nonce",     "type": "uint32"},
+                ],
+            }
+        ],
+        "stateMutability": "view",
+    },
+    {
         "name": "scoreDataOf",
         "type": "function",
         "inputs": [{"name": "wallet", "type": "address"}],
@@ -90,8 +107,15 @@ def extract_features(wallet: str) -> dict[str, float]:
     }
 
 
-def fetch_current_nonce(wallet: str) -> int:
-    """Read the current on-chain nonce for *wallet* from the registry."""
+def fetch_current_nonce(wallet: str, trust: bool = False) -> int:
+    """
+    Read the current on-chain nonce for *wallet* from the registry.
+
+    Score and trust keep independent nonce sequences, so the caller must say which one
+    it is advancing. Reading the wrong one produces a signature the registry rejects
+    with NonceTooLow -- which is the intended behaviour, since the separation is what
+    stops a captured score attestation being replayed as trust.
+    """
     registry_addr = os.environ.get("REGISTRY_ADDRESS", "")
     if not registry_addr:
         return 0
@@ -101,9 +125,8 @@ def fetch_current_nonce(wallet: str) -> int:
         address=Web3.to_checksum_address(registry_addr),
         abi=_REGISTRY_ABI,
     )
-    data = registry.functions.scoreDataOf(
-        Web3.to_checksum_address(wallet)
-    ).call()
+    fn = registry.functions.trustDataOf if trust else registry.functions.scoreDataOf
+    data = fn(Web3.to_checksum_address(wallet)).call()
     return int(data[2])
 
 
@@ -215,3 +238,112 @@ def _compute_hist_tox(events: list[LogReceipt]) -> float:
         except Exception:
             continue
     return min(total / 10_000.0, 1.0)
+
+
+# ── Trust features (v2) ──────────────────────────────────────────────────────
+
+_FEE_QUOTED_TOPIC = Web3.keccak(
+    text="FeeQuoted(bytes32,address,uint24,uint24,uint24,uint24,uint24,uint24)"
+).hex()
+
+_SANDWICH_TOPIC = Web3.keccak(
+    text="SandwichDetected(bytes32,address,address,address,uint256)"
+).hex()
+
+
+def extract_trust_features_onchain(wallet: str) -> dict[str, int]:
+    """
+    Raw counts for the trust model, read from the hook's own event stream.
+
+    The interesting one is `uninformed_swaps`. Trust is earned by supplying the order
+    flow LPs actually want — flow that moves the pool *away* from the reference price
+    rather than closing the gap. Establishing that offline would normally mean replaying
+    historical oracle prices against every swap, which is slow and approximate.
+
+    It is unnecessary here, because the hook already decided at execution time and put
+    the answer on-chain: `FeeQuoted.arb` is non-zero exactly when the swap was
+    gap-closing. Counting swaps whose arb premium was zero is therefore an exact record
+    of uninformed flow, not an estimate of it — and it costs one log scan.
+    """
+    w3 = _w3()
+    wallet_cs = Web3.to_checksum_address(wallet)
+    hook_addr = os.environ.get("HOOK_ADDRESS", "")
+
+    latest = w3.eth.block_number
+    from_block = max(0, latest - _lookback())
+
+    total_swaps = 0
+    uninformed_swaps = 0
+    clean_streak = 0
+    sandwich_legs = 0
+
+    if hook_addr:
+        wallet_topic = "0x" + wallet_cs[2:].rjust(64, "0").lower()
+        hook_cs = Web3.to_checksum_address(hook_addr)
+
+        try:
+            quotes = w3.eth.get_logs({
+                "fromBlock": from_block,
+                "toBlock":   latest,
+                "address":   hook_cs,
+                "topics":    [_FEE_QUOTED_TOPIC, None, wallet_topic],
+            })
+        except Exception:
+            quotes = []
+
+        for log in quotes:
+            data = bytes(log["data"])
+            # base, arb, unproven, toxic, trustDiscount, finalFee — six words of 32 bytes.
+            if len(data) < 192:
+                continue
+            arb = int.from_bytes(data[32:64], "big")
+            total_swaps += 1
+            if arb == 0:
+                uninformed_swaps += 1
+                clean_streak += 1
+            else:
+                clean_streak = 0
+
+        try:
+            sandwiches = w3.eth.get_logs({
+                "fromBlock": from_block,
+                "toBlock":   latest,
+                "address":   hook_cs,
+                "topics":    [_SANDWICH_TOPIC, None, wallet_topic],
+            })
+            sandwich_legs = len(sandwiches)
+        except Exception:
+            sandwich_legs = 0
+
+    settled_volume_wei = _settled_volume(w3, wallet_cs, from_block, latest)
+    wallet_age_blocks = _wallet_age_blocks(w3, wallet_cs, from_block, latest)
+
+    return {
+        "settled_volume_wei": settled_volume_wei,
+        "wallet_age_blocks":  wallet_age_blocks,
+        "uninformed_swaps":   uninformed_swaps,
+        "total_swaps":        total_swaps,
+        "clean_streak_swaps": clean_streak,
+        "sandwich_legs":      sandwich_legs,
+    }
+
+
+def _settled_volume(w3: Web3, wallet: str, from_block: int, to_block: int) -> int:
+    """Cumulative absolute notional across the wallet's swaps, in wei of token0."""
+    total = 0
+    for event in _fetch_swap_events(w3, wallet, from_block, to_block):
+        data = bytes(event["data"])
+        if len(data) < 64:
+            continue
+        amount0 = int.from_bytes(data[0:32], "big", signed=True)
+        total += abs(amount0)
+    return total
+
+
+def _wallet_age_blocks(w3: Web3, wallet: str, from_block: int, to_block: int) -> int:
+    """Blocks since the wallet's first observed swap in the lookback window."""
+    events = _fetch_swap_events(w3, wallet, from_block, to_block)
+    if not events:
+        return 0
+    first = min(int(e["blockNumber"]) for e in events)
+    return max(0, to_block - first)
