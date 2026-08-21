@@ -21,6 +21,8 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
+import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {BaseGlyphHook} from "../src/base/BaseGlyphHook.sol";
 import {GlyphHook} from "../src/GlyphHook.sol";
 import {ReputationRegistry} from "../src/ReputationRegistry.sol";
 import {IReputationRegistry} from "../src/interfaces/IReputationRegistry.sol";
@@ -461,5 +463,93 @@ contract GlyphHookTest is Test {
 contract SmartAccount {
     function register(GlyphHook hook) external {
         hook.registerSmartAccount();
+    }
+}
+
+/// @notice BaseGlyphHook's reverting defaults.
+///
+/// @dev    v1 implemented all ten callbacks as no-op stubs that returned their selectors,
+///         which is worse than not implementing them: a stub is indistinguishable from a real
+///         implementation to anyone reading the interface, and if a permission bit were ever
+///         set by accident the stub would quietly accept the call. Reverting defaults mean an
+///         unpermissioned callback that somehow gets invoked fails loudly instead.
+///
+///         These assertions exist so that property cannot regress silently.
+contract BaseGlyphHookDefaultsTest is Test {
+    using PoolIdLibrary for PoolKey;
+
+    PoolManager manager;
+    ReputationRegistry registry;
+    MockPriceOracle oracle;
+    GlyphHook hook;
+    PoolKey key;
+
+    function setUp() public {
+        manager = new PoolManager(address(0xD1));
+        registry = new ReputationRegistry(address(0xD1));
+        oracle = new MockPriceOracle();
+
+        uint160 flags =
+            uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
+        bytes memory args = abi.encode(address(manager), address(registry), address(oracle), address(0xD1));
+        (, bytes32 salt) = HookMiner.find(address(this), flags, type(GlyphHook).creationCode, args);
+        hook = new GlyphHook{salt: salt}(
+            IPoolManager(address(manager)),
+            IGlyphRegistry(address(registry)),
+            IPriceOracle(address(oracle)),
+            address(0xD1)
+        );
+
+        key = PoolKey({
+            currency0: Currency.wrap(address(1)),
+            currency1: Currency.wrap(address(2)),
+            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
+            tickSpacing: 60,
+            hooks: IHooks(address(hook))
+        });
+    }
+
+    function test_beforeInitialize_reverts() public {
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.beforeInitialize(address(this), key, 0);
+    }
+
+    function test_afterInitialize_reverts() public {
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.afterInitialize(address(this), key, 0, 0);
+    }
+
+    function test_beforeAddLiquidity_reverts() public {
+        ModifyLiquidityParams memory p;
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.beforeAddLiquidity(address(this), key, p, "");
+    }
+
+    function test_afterAddLiquidity_reverts() public {
+        ModifyLiquidityParams memory p;
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.afterAddLiquidity(address(this), key, p, BalanceDelta.wrap(0), BalanceDelta.wrap(0), "");
+    }
+
+    function test_beforeRemoveLiquidity_reverts() public {
+        ModifyLiquidityParams memory p;
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.beforeRemoveLiquidity(address(this), key, p, "");
+    }
+
+    function test_afterRemoveLiquidity_reverts() public {
+        ModifyLiquidityParams memory p;
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.afterRemoveLiquidity(address(this), key, p, BalanceDelta.wrap(0), BalanceDelta.wrap(0), "");
+    }
+
+    function test_beforeDonate_reverts() public {
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.beforeDonate(address(this), key, 0, 0, "");
+    }
+
+    function test_afterDonate_reverts() public {
+        vm.expectRevert(BaseGlyphHook.HookNotImplemented.selector);
+        hook.afterDonate(address(this), key, 0, 0, "");
     }
 }
