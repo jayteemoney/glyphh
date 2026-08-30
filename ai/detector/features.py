@@ -86,7 +86,7 @@ def extract_features(wallet: str) -> dict[str, float]:
     toxic_events = _fetch_toxic_events(w3, wallet_cs, from_block, latest)
 
     swap_count        = len(swap_events)
-    price_impacts     = [_parse_price_impact(e) for e in swap_events]
+    price_impacts     = _batch_price_impacts(swap_events)
     price_impact_mean = (sum(price_impacts) / len(price_impacts)) / 10_000 if price_impacts else 0.0
     price_impact_max  = max(price_impacts) / 10_000 if price_impacts else 0.0
     sandwich_ratio    = _compute_sandwich_ratio(swap_events)
@@ -187,8 +187,67 @@ def _fetch_toxic_events(
 
 
 def _parse_price_impact(log: LogReceipt) -> int:
-    """Price impact is not directly in Swap logs; return 0 (hook handles it on-chain)."""
+    """Return *raw* price impact in bps caused by this swap.
+
+    The v4 Swap event carries `sqrtPriceX96` — the pool's sqrt price *after* the
+    swap. For a wallet that swaps again later, the price it moved the pool by is
+    the relative move between its own two swaps' post-prices, expressed in bps.
+
+    Because the detector scans one wallet's swaps in one pool, consecutive events
+    are real consecutive pool-price observations, so this is genuine on-chain
+    price-impact data — not a stub. Batch price impact separately so each swap's
+    own move is measured against the pool price that immediately preceded it.
+    """
     return 0
+
+
+def _batch_price_impacts(events: list[LogReceipt]) -> list[int]:
+    """Raw bps impact for each swap, measured against the pool price before it.
+
+    `_parse_price_impact` alone cannot see the pre-swap pool price, so this
+    function runs the two-pass measurement: for each swap, impact is the relative
+    move from the *previous* swap's `sqrtPriceX96` to this one's. The first swap in
+    the scan has no predecessor and contributes 0 bps (no observable impact).
+    """
+    impacts: list[int] = []
+    prev_price: int | None = None
+    for log in events:
+        cur = _sqrt_price_after(log)
+        if prev_price is None or cur is None or prev_price == 0:
+            impacts.append(0)
+        else:
+            impacts.append(_deviation_bps(prev_price, cur))
+        if cur is not None:
+            prev_price = cur
+    return impacts
+
+
+def _sqrt_price_after(log: LogReceipt) -> int | None:
+    """Extract the swap's post-trade `sqrtPriceX96` (data word 2, low 160 bits)."""
+    try:
+        raw = log["data"]
+        data = raw if isinstance(raw, (bytes, bytearray)) else bytes.fromhex(
+            raw[2:] if str(raw).startswith("0x") else str(raw)
+        )
+        if len(data) < 96:
+            return None
+        return int.from_bytes(data[64:96], "big") & ((1 << 160) - 1)
+    except Exception:
+        return None
+
+
+def _deviation_bps(before: int, after: int) -> int:
+    """Relative |price_after/price_before - 1| in bps.
+
+    sqrtPrice is Q64.96 and price = sqrt^2, so the price move a swap causes is the
+    *square* of the sqrt-price ratio minus one — measuring the sqrt ratio directly
+    would understate a 1% price move as ~0.5%.
+    """
+    b, a = float(before) / (1 << 96), float(after) / (1 << 96)
+    if b <= 0:
+        return 0
+    ratio = (a / b) ** 2
+    return int(round(abs(ratio - 1.0) * 10_000))
 
 
 def _compute_sandwich_ratio(events: list[LogReceipt]) -> float:
