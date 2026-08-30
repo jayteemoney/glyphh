@@ -182,6 +182,7 @@ class SwapObs:
     timestamp:    float
     zero_for_one: bool
     fee:          int    # hundredths of a bip, from the Swap event
+    sqrt_price:   int    # pool sqrt price (Q64.96) after this swap; for price impact
 
 
 class WalletWindow:
@@ -209,6 +210,12 @@ def window_features(swaps: list[SwapObs], burst_gap: float) -> dict[str, float]:
 
     burst_ratio    — fraction of swaps following the previous one within burst_gap
     sandwich_ratio — directional pressure: fraction of consecutive same-direction pairs
+    price_impact   — real: relative move of the pool price across the wallet's swaps.
+
+    Because the keeper streams a single pool, consecutive `sqrt_price` values are
+    genuine consecutive pool prices, so the impact a swap caused is the move between
+    its own post-price and the previous post-price. The first swap has no predecessor
+    and any no-price observation contributes 0.
     """
     n = len(swaps)
     if n == 0:
@@ -218,6 +225,8 @@ def window_features(swaps: list[SwapObs], burst_gap: float) -> dict[str, float]:
         )}
 
     burst_pairs = same_dir_pairs = 0
+    impacts: list[float] = []
+    prev_price: int | None = None
     for prev, cur in zip(swaps, swaps[1:]):
         if cur.timestamp - prev.timestamp <= burst_gap:
             burst_pairs += 1
@@ -225,15 +234,37 @@ def window_features(swaps: list[SwapObs], burst_gap: float) -> dict[str, float]:
             same_dir_pairs += 1
     pairs = max(n - 1, 1)
 
+    for obs in swaps:
+        if prev_price is not None and prev_price > 0 and obs.sqrt_price > 0:
+            impacts.append(_price_impact(prev_price, obs.sqrt_price))
+        else:
+            impacts.append(0.0)
+        if obs.sqrt_price > 0:
+            prev_price = obs.sqrt_price
+
+    mean_impact = sum(impacts) / len(impacts) if impacts else 0.0
+    max_impact = max(impacts) if impacts else 0.0
+
     return {
         "swap_count_7d":     min(n / 1000.0, 1.0),
-        "price_impact_mean": 0.0,   # stubbed on-chain too (Phase 4)
-        "price_impact_max":  0.0,
+        "price_impact_mean": mean_impact,
+        "price_impact_max":  max_impact,
         "sandwich_ratio":    same_dir_pairs / pairs,
         "burst_ratio":       burst_pairs / pairs,
         "new_wallet_flag":   0.0,   # cheap default; window behaviour dominates
         "hist_tox_score_7d": 0.0,
     }
+
+
+def _price_impact(before: int, after: int) -> float:
+    """Relative |price_after/price_before - 1| as a 0..1 fraction (for the model).
+
+    price = sqrt^2, so square the sqrt-price ratio to get the true price move.
+    """
+    b, a = float(before) / (1 << 96), float(after) / (1 << 96)
+    if b <= 0:
+        return 0.0
+    return abs(((a / b) ** 2) - 1.0)
 
 
 def same_direction_ratio(swaps: list[SwapObs]) -> float:
@@ -288,10 +319,12 @@ class Keeper:
                 data = bytes(log["data"])
                 amount0 = int.from_bytes(data[0:32], "big", signed=True)
                 fee     = int.from_bytes(data[160:192], "big")
+                sqrt    = int.from_bytes(data[64:96], "big") & ((1 << 160) - 1)
                 out.append((wallet, SwapObs(
                     timestamp    = self._timestamp(log["blockNumber"]),
                     zero_for_one = amount0 < 0,
                     fee          = fee,
+                    sqrt_price   = sqrt,
                 )))
             frm = to + 1
 
