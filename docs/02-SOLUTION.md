@@ -99,6 +99,9 @@ the dashboard tallies `LPDonation` totals live.
 - ✅ Reactive RSC: deployed and funded on Lasna, subscribed to the registry.
 - ✅ Live dashboard (Next.js + wagmi): scores, toxic-activity feed, LP-donation tally, with
   historical backfill and live decay.
-- ⚠️ Demo-grade ML model (synthetic training set; price-impact feature stubbed) and
-  `tx.origin` identity heuristic — both disclosed, with production paths specified in
-  [05 — UHI submission fit](05-UHI-SUBMISSION.md#what-we-tell-judges-about-limitations).
+- ⚠️ Curated (not yet real-MEV-trained) ML model — the classifier is trained on a
+  deterministic train/validation split with held-out metrics pinned in tests, and the
+  price-impact feature is now **real** (computed per swap from the pool's on-chain
+  `sqrtPriceX96`, not a stub). Remaining production path: retrain on labelled historical
+  MEV data. `tx.origin` identity heuristic — both disclosed, with production paths
+  specified in [05 — UHI submission fit](05-UHI-SUBMISSION.md#what-we-tell-judges-about-limitations).

@@ -158,9 +158,12 @@ three, each with its production path:
 1. **Identity = `tx.origin`** (MVP heuristic, openly documented). Production: key reputation
    on `hash(tx.origin, msg.sender)` to resist contract-wrapper reroutes; longer-term,
    stake-weighted attestors.
-2. **Demo-grade ML model** (gradient boosting on a synthetic set; price-impact feature
-   stubbed). The *pipeline* — features → model → EIP-712 → on-chain — is real and live; the
-   model is swappable in one file. Production: train on labeled historical MEV data.
+2. **Curated-set ML model** (gradient boosting trained on a deterministic train/validation
+   split, with held-out accuracy/F1 pinned in tests; not yet a real-MEV-trained model).
+   The price-impact feature is now **real** — computed from the pool's on-chain
+   `sqrtPriceX96` per swap — not a stub. The *pipeline* — features → model → EIP-712 →
+   on-chain — is real and live; the model is swappable in one file. Production: train on
+   labeled historical MEV data.
 3. **Pyth first-touch auto-flag off in the current deploy** (feeds configured; feature
    gated to Phase 4). The reputation path — the core thesis — does not depend on it.
 
