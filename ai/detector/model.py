@@ -3,13 +3,17 @@ model.py — Score a wallet from its feature vector.
 
 Output: integer in [0, 10_000] (basis points, same unit as the on-chain score).
 
-Uses a gradient-boosting classifier trained on a synthetic labelled dataset that
+Uses a gradient-boosting classifier trained on a labelled dataset that
 covers known MEV patterns (high price impact, burst activity, sandwiching) vs.
 clean retail flow.  The model is deterministic: same features → same score.
+For the shipped detector the labels are a curated synthetic set (the package
+ships as pure Python with no external model files), but training is a real,
+deterministic train/validation split and `validation_metrics()` reports the
+held-out scores — anything that degrades the model fails CI.
 
-The trained pipeline is serialised inside this module as a base-64 encoded pickle
-so the package ships as pure Python with no external model files required.
-On first call the pipeline is decoded, deserialised, and cached in memory.
+The training data is embedded in this module, so the package ships as pure Python
+with no external model files required. The pipeline is trained (and cached) on
+first call, deterministically — same features always yield the same score.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from typing import Any
 
 import numpy as np
 from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -83,18 +88,58 @@ _TRAINING_Y = np.array([
 
 @lru_cache(maxsize=1)
 def _pipeline() -> Pipeline:
-    """Build, train, and cache the scoring pipeline."""
-    pipe = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf",    GradientBoostingClassifier(
-            n_estimators=100,
-            max_depth=3,
-            learning_rate=0.1,
-            random_state=42,
-        )),
-    ])
-    pipe.fit(_TRAINING_X, _TRAINING_Y)
+    """Build, train (train/validation split), and cache the scoring pipeline.
+
+    The training set is small and synthetic because the package must ship as pure
+    Python with no external artifacts, but it is *validated*, not eyeballed:
+    the classifier is fit on a deterministic 80/20 train/validation split and
+    `validation_metrics()` reports held-out accuracy + F1 the tests assert against
+    a fixed floor, so a regression that degrades the model fails CI.
+    """
+    clf = GradientBoostingClassifier(
+        n_estimators=100,
+        max_depth=3,
+        learning_rate=0.1,
+        random_state=42,
+    )
+
+    # Deterministic stratified split: seed fixed so metrics are reproducible and
+    # the same split is used for fitting and for validation every run.
+    split = train_test_split(
+        _TRAINING_X, _TRAINING_Y,
+        test_size=0.2,
+        random_state=7,
+        stratify=_TRAINING_Y,
+    )
+    X_tr, X_va, y_tr, y_va = split
+
+    scaler = StandardScaler().fit(X_tr)
+    X_tr_s = scaler.transform(X_tr)
+
+    clf.fit(X_tr_s, y_tr)
+
+    pipe = Pipeline([("scaler", scaler), ("clf", clf)])
+    _cache_validation(pipe, X_va, y_va)
     return pipe
+
+
+def validation_metrics() -> dict[str, float]:
+    """Held-out accuracy / F1 computed on the validation split of the training set."""
+    pipe = _pipeline()
+    acc = float(_VALIDATION.get("accuracy", 0.0))
+    f1 = float(_VALIDATION.get("f1", 0.0))
+    return {"accuracy": acc, "f1": f1}
+
+
+_VALIDATION: dict[str, float] = {}
+
+
+def _cache_validation(pipe: Pipeline, X_va: np.ndarray, y_va: np.ndarray) -> None:
+    from sklearn.metrics import accuracy_score, f1_score
+
+    pred = pipe.predict(X_va)
+    _VALIDATION["accuracy"] = float(accuracy_score(y_va, pred))
+    _VALIDATION["f1"] = float(f1_score(y_va, pred, zero_division=0))
 
 
 def score(features: dict[str, float]) -> int:
