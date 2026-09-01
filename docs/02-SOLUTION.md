@@ -1,107 +1,192 @@
-# 02 — The solution: reputation-priced liquidity
+# 02 — The solution: price the swap, not the swapper
 
-Glyph turns the swap fee from a constant into a function of the swapper. One sentence:
-**every wallet carries a live, decaying toxicity score, and every Glyph pool quotes that
-wallet a fee derived from it — with the premium above the base fee paid to LPs in the same
-transaction.**
+Glyph turns the swap fee from a constant into a function of **what the swap does to the pool**.
+One sentence:
 
-Everything below is **deployed and verified on Unichain Sepolia** (addresses and
-verification txs in [DEPLOYMENT.md](DEPLOYMENT.md)).
+> **A swap that moves the pool toward the true price is capturing LVR and pays for it; a swap
+> that moves the pool away is the uninformed flow LPs want and pays the base rate — at any
+> size, from any wallet, with no history required.**
 
-## The numbers, measured live
+Reputation still exists. It is no longer the defence. It is a discount.
 
-| Behaviour | Score | Fee quoted | Multiple vs base |
+Everything below is deployed and verified on Unichain Sepolia; addresses and transaction
+hashes are in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+---
+
+## Why the inversion
+
+Glyph v1 priced swaps on a per-wallet toxicity score. The UHI9 judge found the structural flaw
+in one sentence:
+
+> *"You key everything off `tx.origin`, which is better than the router sender but still
+> spoofable via fresh wallets… so I'd think about how a sandwicher simply rotating EOAs
+> defeats the score."*
+
+That objection is fatal to any design where **the clean state is the default and the default is
+free**, because then rotating to a fresh EOA is a complete reset. And no better identity key
+fixes it: every key an attacker controls, they can mint more of.
+
+So v2 stops depending on identity for the defence:
+
+| | v1 | v2 |
+|---|---|---|
+| What sets the fee | the wallet's score | what the swap does to the pool |
+| Fresh wallet | free | pays the arbitrage premium on trade #1; pays the unproven premium if large |
+| Rotation returns you to | **free** | **unproven** — you forfeit a discount rather than escape a penalty |
+| Reputation's role | the whole mechanism | one term of a sum, and the only term that can go *down* |
+
+---
+
+## The three layers
+
+Ordered from identity-free to identity-dependent. The first two cannot be sybilled at all.
+
+### L1 — directional arbitrage premium
+
+Read the pool's real price from `slot0`, read a reference price from an `IPriceOracle`, and
+compare. Then ask the question no other fee hook asks: **is this swap closing that gap or
+widening it?**
+
+```solidity
+divergenceBps = |poolPrice - referencePrice| / referencePrice
+closesGap     = (poolPrice > referencePrice) == zeroForOne
+```
+
+If it closes the gap, the swap is the arbitrage LPs lose to, and the hook charges **60% of the
+gap it closes**, past a 10 bp band left for oracle noise:
+
+```
+premium = (divergenceBps - 10) × 60,   capped at 5.00%
+```
+
+If it widens the gap, the premium is **exactly zero**. No size threshold, no reputation lookup,
+no discretion.
+
+The arithmetic is auditable from the event log. On Unichain Sepolia, with divergence measured
+at 101 bps: `(101 - 40) × 60 = 3660`, and 3660 is the number in the `FeeQuoted` event.
+
+| Swap | base | arb | final |
 |---|---|---|---|
-| Clean trader (paced, alternating swaps) | 0 | **0.30%** | 1x |
-| Flagged MEV-style burst | 8,000 | **5.20%** | ~17x |
-| Worst case (score 10,000) | 10,000 | 10.00% | ~33x |
+| [Closes the gap](https://sepolia.uniscan.xyz/tx/0xd4ecdc36bae6b432f7297f2cd3df122c88d1ef5b6ebc98c3618aa1ab8aa7620d) | 3000 | **3660** | **0.666%** |
+| [Widens it](https://sepolia.uniscan.xyz/tx/0xd02e2a2e804aff6709eeed971c86f631d44a5cf0c21a5df20834d97514a666ad) | 3000 | 0 | **0.300%** |
 
-The detector keeper flagged the attacker bot **mid-burst, autonomously, in seconds** — no
-human touched anything — and every basis point above 0.30% accrued to in-range LPs via the
-pool's fee-growth accounting (`LPDonation` events surface it; 69 Foundry tests cover the
-mechanics, including fuzz, invariant and an end-to-end demo scenario).
+Same pool, same divergence, same size, same wallet. Only the direction differs.
 
-## How a swap is priced (the hot path)
+### L2 — same-block sandwich surcharge, paid to the victim
 
-1. **`beforeSwap`** — the hook reads `registry.scoreOf(tx.origin)`. The registry returns the
-   *decay-adjusted* score (see Fairness below). The score maps through a piecewise-linear
-   curve (`ToxicityScoring`) to a dynamic LP fee between 0.30% and 10%, applied with v4's
-   `OVERRIDE_FEE_FLAG`. A Pyth pull-oracle check can additionally catch anomalous first-touch
-   price impact and override to the max fee immediately.
-2. **`afterSwap`** — the premium above the base fee has already been credited to in-range
-   liquidity by the PoolManager's dynamic-fee accounting; the hook emits `LPDonation` with the
-   premium amounts for observability. If the swap was locally toxic, the hook calls
-   `registry.reportToxicTrade`, feeding the cross-pool layer.
+Three legs in one block — a wallet opens, a third party trades the same direction into the
+worse price, the same wallet reverses — is a sandwich. The hook tracks a sliding two-swap
+window per pool per block and prices the closing leg at `MAX_FEE`.
 
-The hot path adds **one external view call** to the swap. All intelligence lives off the
-critical path.
+**The surcharge does not go to the LPs.** Only the normally-assembled fee reaches them through
+v4's dynamic-fee override. The remainder is taken as a hook delta
+(`afterSwapReturnDelta` → `poolManager.take`) and escrowed by address in `RebateVault`, where
+the trader in the middle can withdraw it.
 
-## How a wallet gets a score (three trust-separated write paths)
+This is the part with no precedent. Every other MEV hook that charges a sandwicher more routes
+the money to liquidity providers, which leaves the party who was actually harmed exactly as
+badly off as before.
 
-| Path | Writer | Authorization | Role |
-|---|---|---|---|
-| `updateScore` | Off-chain ML detector | EIP-712 signature from an allow-listed attestor, strictly-monotonic per-wallet nonce, capped deadline | Behavioral intelligence |
-| `reportToxicTrade` | The pools themselves | `authorizedHook` allow-list | Ground-truth, on-chain evidence |
-| `updateScoreFromReactive` | Reactive Network callback | Registered `reactiveProxy` (adapter) only, which itself validates the Reactive callback proxy | Cross-pool aggregation |
+Demonstrated on Unichain Sepolia:
 
-No single component is trusted with the whole system: the detector can't impersonate a pool,
-a pool can't forge an attestation, and the Reactive path is confined to its adapter.
+```
+victim credited     4.840724788897067876 token0
+attacker flagged    toxicity 4999
+victim claimed      1104.910407 → 1109.751132 token0
+after claim         claimable 0, vault outstanding 0
+```
 
-### The autonomous detector (keeper)
+### L3 — reputation, as a discount
 
-A Python keeper watches the v4 PoolManager's `Swap` events for Glyph pools, attributes each
-swap to its EOA, and maintains a sliding behavioral window per wallet: inter-swap time gaps
-(burstiness), directional pressure (same-direction ratio — the sandwich/arb footprint), and
-activity counts. A gradient-boosted classifier plus hard rules produce a score; if it crosses
-the threshold, the keeper signs an EIP-712 attestation and submits it — **detection to
-on-chain repricing in under ~10 seconds**, with client-side replay and rate-limit guards on
-the attestor key.
+Three terms, all identity-dependent, and the only place a wallet's history matters:
 
-### Cross-pool propagation (Reactive Network)
+| Term | Direction | Meaning |
+|---|---|---|
+| `unproven` | **+** | A large swap from a wallet with no earned trust. Scales with size as a fraction of in-range liquidity; swaps under 0.5% of reserves never pay it, capped at 2.00%. |
+| `toxic` | **+** | The detector has flagged this wallet. The v1 curve, unchanged, now one term of a sum. Decays to zero over 7 days. |
+| `trustDiscount` | **−** | Earned by settled benign volume over time. Buys the fee down from 0.30% toward a **0.05% floor**. Decays over 30 days. |
 
-`GlyphReactive`, a Reactive Smart Contract on Reactive Lasna, holds **one subscription to the
-registry** — which covers every Glyph pool at once, because all hooks report into the same
-registry. It aggregates severity per wallet and, past a threshold, dispatches a callback that
-raises the wallet's score *everywhere*. An attacker can't pool-hop: every pool is a sensor
-for every other pool.
+Trust is deliberately expensive to earn: `depth × quality × integrity`, a product rather than a
+weighted sum, gated on a minimum of ten settled swaps. A product means any factor at zero
+zeroes the result — which is why a wallet with no history scores 0 (it has proven nothing, not
+that it is suspected of anything) and why a 95%-gap-closing arbitrageur cannot buy trust with
+volume alone.
 
-### ZK-proven history (Brevis)
+---
 
-Historical toxicity is provable, not just assertable: a Brevis circuit (Go, deployed
-scaffold + on-chain `GlyphHistoryConsumer`) proves a wallet's past `ToxicTradeReported`
-events into the detector's feature set. Where no proof exists, the detector falls back to an
-RPC event scan — trust-minimization is progressive, not all-or-nothing.
+## Assembling the fee
 
-## Fairness: a price, not a blacklist
+```solidity
+fee  = BASE_FEE                          // 0.30%
+     + arbPremium(divergence, closesGap) // L1, identity-free
+     + unprovenPremium(sizeBps)          // L3a, only if trust == 0
+     + toxicPremium(score)               // L3b
+     - trustDiscount(trust)              // L3c
+clamped to [0.05%, 10.00%]
+```
 
-Scores **decay linearly to zero over 7 days**. Stop the toxic behaviour and the fee returns
-to base — observable live on testnet (a wallet flagged at 8,000 read back 7,999 one block
-later, and ~5,400 two days later). This single property answers the hardest objections:
+Every term is emitted separately:
 
-- **No permanent punishment** — there is always a path back to 0.30%.
-- **Griefing-resistant** — even a falsely-elevated score is temporary and costs the attacker
-  an authorized signature or real on-chain toxic behaviour to produce.
-- **Economically coherent** — recent behaviour is what predicts the next trade; old sins
-  shouldn't price today's flow.
+```
+FeeQuoted(poolId, swapper, base=3000, arb=3660, unproven=0, toxic=0, trustDiscount=0, final=6660)
+```
 
-## LP-positive by construction
+That turns "the model is fair" into something any trader can audit line by line — and it gives
+the off-chain detector an exact on-chain record of which swaps were uninformed (`arb == 0`),
+from one log scan instead of replaying oracle history.
 
-Toxic flow is not blocked — it is **repriced**. The pool keeps serving every trader, but the
-fee curve makes extraction unprofitable and routes the toxicity premium to the people it was
-extracted from. LVR stops being a silent tax on LPs and becomes a visible yield line item:
-the dashboard tallies `LPDonation` totals live.
+---
 
-## What exists today (honest inventory)
+## The hot path
 
-- ✅ Hook, registry, scoring curve, adapter: deployed, 69/69 tests, verified clean + toxic
-  paths live on Unichain Sepolia.
-- ✅ Autonomous keeper: built, running, verified flagging live (0 → 8,000 mid-burst).
-- ✅ Reactive RSC: deployed and funded on Lasna, subscribed to the registry.
-- ✅ Live dashboard (Next.js + wagmi): scores, toxic-activity feed, LP-donation tally, with
-  historical backfill and live decay.
-- ⚠️ Curated (not yet real-MEV-trained) ML model — the classifier is trained on a
-  deterministic train/validation split with held-out metrics pinned in tests, and the
-  price-impact feature is now **real** (computed per swap from the pool's on-chain
-  `sqrtPriceX96`, not a stub). Remaining production path: retrain on labelled historical
-  MEV data. `tx.origin` identity heuristic — both disclosed, with production paths
-  specified in [05 — UHI submission fit](05-UHI-SUBMISSION.md#what-we-tell-judges-about-limitations).
+`beforeSwap` does one `slot0` read, one oracle view call, two registry view calls, and pure
+arithmetic. All intelligence — the model, the trust computation, the cross-pool aggregation —
+lives off the critical path. `afterSwap` settles the rebate delta and reports toxicity.
+
+State that must survive from `beforeSwap` to `afterSwap` lives in **EIP-1153 transient
+storage** with a per-leg sequence number, so a multi-hop route that touches the same pool twice
+does not have its second leg read the first leg's fee. v1 used a persistent mapping keyed
+`(poolId, tx.origin)` and had exactly that bug.
+
+---
+
+## Who can write a score
+
+No single component is trusted with the whole system.
+
+| Path | Writer | Authorization |
+|---|---|---|
+| `updateScore` / `updateTrust` | off-chain detector | EIP-712 from an allow-listed attestor, separate typehashes and nonce sequences, capped deadline |
+| `reportToxicSwap` | the pools themselves | `authorizedHook` allow-list, keyed on the real `PoolId` |
+| `updateScoreFromReactive` | Reactive Network | the registered proxy adapter only, which itself validates the canonical callback proxy and RVM id |
+
+The detector cannot impersonate a pool, a pool cannot forge an attestation, and the Reactive
+path can only ever raise a score.
+
+---
+
+## Cross-pool propagation
+
+`GlyphReactive` on Reactive Lasna holds **one** subscription to the registry's
+`ToxicSwapReported` event, so every Glyph pool that will ever deploy is already covered — O(1)
+subscriptions where the naive design is O(n). It tracks the **set of distinct pools** a wallet
+has been flagged in and propagates only at two or more.
+
+That threshold is the point. A wallet flagged five times in one pool is that pool's local
+problem, already priced by its own hook; broadcasting it buys nothing and burns REACT.
+
+---
+
+## What this costs honest traders
+
+Nothing. An ordinary swap that does not close an oracle gap, is not the closing leg of a
+sandwich, and is not large relative to the pool pays **0.30%** — the same as it would in any
+other pool. A wallet that has proven itself pays as little as **0.05%**.
+
+That is the sustainable-low-fee half of the thesis: not a cheaper pool for everyone, funded by
+nobody, but a **0.30% pool that quotes 0.05% to flow that has earned it, funded by what
+extractive flow pays.**
+
+See [03 — The ecosystem gap](03-ECOSYSTEM-GAP.md) for how this differs from the directional and
+oracle-divergence designs it will be compared against.

@@ -1,143 +1,153 @@
-# 03 — The ecosystem gap: the axis nobody prices
+# 03 — The ecosystem gap: where Glyph is new, and where it is not
 
-## The landscape
+Most project docs claim total novelty. That claim does not survive a judge who knows the
+field, and the fastest way to lose a technical audience is to have them name your prior art
+before you do. So this doc names it first.
 
-Defending LPs from toxic flow is one of the most active areas in AMM research and in the
-hook ecosystem itself. Mapping the field by *what signal the defense reacts to*:
+---
 
-| Approach | Example | Signal | LP protected from | Trader memory | Cross-pool |
-|---|---|---|---|---|---|
-| Static fee tiers | Uniswap v3 | none | nothing specific | ✗ | ✗ |
-| Volatility-reactive fees | AdaptiveSwap (UHI4 winner) | realized volatility | vol-spike arbitrage | ✗ | ✗ |
-| Oracle-divergence fees | DetoxHook | pool-vs-Pyth gap | stale-price arbitrage | ✗ | ✗ |
-| Private order flow | MEV-protect RPCs, CoW | the victim's tx | swapper (not LP!) from sandwiches | ✗ | ✗ |
-| Auction the right to trade first | am-AMM, MEV taxes | bidding | redistributes arb profit | ✗ | ✗ |
-| Permissioned pools | KYC/allowlist hooks | legal identity | everything — by excluding everyone | ✓ (binary) | ✗ |
-| **Identity-priced fees** | **Glyph** | **the wallet's behavioral history** | **all repeat toxic flow** | **✓ (graded, decaying)** | **✓ (seconds)** |
+## The landscape, by what the defence reacts to
 
-Two structural observations:
+| Approach | Example | Signal | Value goes to | Sandwich victim made whole? |
+|---|---|---|---|---|
+| Static fee tiers | Uniswap v3 | none | LPs | ✗ |
+| Volatility-reactive fees | AdaptiveSwap (UHI4) | realized volatility | LPs | ✗ |
+| Directional fees, oracle-free | Nezlobin's design | recent pool price drift | LPs | ✗ |
+| Oracle-divergence capture | **DetoxHook** | pool vs Pyth gap | **LPs (80%), protocol (20%)** | ✗ |
+| Retrospective victim rebate | **MEVictim Rebate** | off-chain subgraph + Axiom proof | victims, as an **LP incentive** | partially, later |
+| Private order flow | MEV-protect RPCs, CoW | the victim's tx | — | avoided, not compensated |
+| Auction the right to extract | am-AMM, MEV taxes | bidding | LPs / pool | ✗ |
+| **Glyph** | | **divergence + direction, block-local sandwich shape, earned history** | **LPs, and the victim directly** | **✓ same block, attacker-funded** |
 
-1. **Every non-Glyph row is stateless about the trader.** They evaluate the swap, the moment,
-   or the market — never the agent. The information that most strongly predicts whether the
-   *next* swap is toxic — the swapper's own history — is public, free, and unused.
-2. **Every non-Glyph row is local.** No deployed mechanism lets pool B benefit from what pool
-   A learned. Attackers exploit this: detection in one venue just moves the flow.
+---
 
-## The gap, precisely stated
+## Where Glyph is *not* new — L1
 
-> There is no permissionless, graded, recoverable, **shared** reputation layer for AMM
-> liquidity — no mechanism by which a pool can quote a worse price to a wallet that has
-> demonstrably extracted from LPs before, and no mechanism by which that knowledge
-> propagates between pools.
+**Oracle-divergence arbitrage capture is an established pattern, and Glyph's L1 is a
+refinement of it, not an invention.**
 
-Glyph is that layer. It is deliberately **not** a blocklist (binary, permanent, governance
--heavy) and **not** another market-condition fee curve (punishes everyone when conditions
-turn). It is a *price* attached to an *identity*, with decay guaranteeing the price is about
-behaviour, not about the wallet per se.
+[DetoxHook](https://github.com/hamiha70/detox-hook) prices swaps against Pyth, captures a
+fixed percentage of the detected arbitrage through v4's dynamic fee, and donates the result to
+LPs. Its capture rate is 70%; Glyph's is 60%. Anyone claiming that Glyph invented charging
+arbitrageurs a proportion of the gap they close is wrong, and a judge who has seen DetoxHook
+will know it.
 
-## Why this is the right primitive (and not just another hook)
+[Nezlobin's directional fee](https://x.com/AlexNezlobin) — which Atrium teaches in this very
+cohort — reaches a similar place without an oracle at all, tilting the fee against the
+direction implied by the pool's own recent price drift.
 
-- **It composes.** The `ReputationRegistry` is a standalone contract with a frozen interface.
-  Any v4 pool adds protection by deploying with the Glyph hook — but any *other* protocol
-  (lending markets gating borrowers, perps venues tiering takers, RFQ systems filtering
-  flow) can read the same registry. The hook is the first consumer, not the only one.
-- **It compounds.** Every additional Glyph pool makes the registry's data better, and the
-  registry makes every additional pool safer on day one — a real network effect, rare in
-  hook designs, impossible for single-pool defenses.
-- **It's complementary, not competitive.** Glyph stacks with everything in the table above:
-  a pool can run volatility-reactive *and* reputation-priced fees; private order flow keeps
-  protecting swappers while Glyph protects LPs. Glyph occupies an empty axis rather than
-  fighting on an occupied one.
-- **It mirrors how every mature market works.** Credit scores, prime brokerage tiering,
-  exchange participant classification — pricing counterparty risk by identity and history is
-  the norm everywhere except DeFi, where the data is *most* available. Glyph is the missing
-  port of a proven mechanism.
+Two honest technical distinctions remain in L1, and they are refinements:
 
-## Competitive advantage against contemporary solutions
+| | DetoxHook | Glyph L1 |
+|---|---|---|
+| Trigger threshold | ~2% arbitrage opportunity | **10 bps** of divergence |
+| Price compared | the swap's execution price | the pool's **pre-swap `slot0`** |
+| Capture | 70% | 60% |
 
-The gap analysis above shows *where* Glyph sits. This section answers the sharper question a
-judge or investor actually asks: **if the alternatives improved tomorrow, what advantage
-does Glyph keep?**
+The threshold difference is the substantive one. Most LVR is bled through gaps far under 2%;
+a 2% floor leaves the ordinary case uncharged. And comparing pre-swap `slot0` rather than
+execution price means the measurement is independent of the swap's own size — a large swap
+cannot inflate the divergence it is then charged for.
 
-### Head-to-head
+Against Nezlobin, the distinction is that a backward-looking drift signal is stale by
+construction and prices a *direction*, while Glyph prices the **live gap this specific swap
+closes** — so a 5 bp gap and a 500 bp gap get different prices rather than the same tilt.
 
-**vs. oracle-divergence hooks (DetoxHook and similar).**
-These price one attack (stale-price arbitrage) during one window (while the gap is open).
-Glyph prices the attacker. A divergence hook resets to zero knowledge the moment prices
-re-converge; Glyph's registry keeps compounding. Even if a divergence hook added memory, it
-would only remember one behaviour in one pool. Glyph already covers the full behavioural
-surface (bursts, direction pressure, sandwich footprints, reported history) across every
-pool at once.
+**And a real cost, disclosed:** Nezlobin's design needs no oracle. Glyph's L1 does. Where no
+reference price is available the layer degrades silently to the base fee, and the pool falls
+back to L2 and L3 alone. That is a genuine advantage Nezlobin's approach holds over ours.
 
-**vs. volatility-reactive fees (AdaptiveSwap and similar).**
-Volatility hooks raise fees on everyone when markets move, which is exactly when honest
-traders most need to trade. That is a regressive tax with real demand cost. Glyph's fee is
-flat 0.30% for honest flow in any market condition; only identified extractors pay more. A
-volatility hook cannot adopt this property without becoming Glyph: it has no concept of an
-identity to discriminate on.
+---
 
-**vs. auction designs (am-AMM, MEV taxes).**
-These are elegant mechanisms for *redistributing* extraction value, and they remain mostly
-research-stage because they demand new market infrastructure (continuous auctions, bidder
-ecosystems, manager roles). Glyph deploys on stock v4 today, touches nothing about how
-ordinary swaps work, and *removes the incentive* rather than taxing its proceeds. The two
-approaches are even compatible: an am-AMM pool could still read the registry.
+## Where Glyph *is* new — L2
 
-**vs. private order flow and intent systems (MEV-protect RPCs, CoW-style batching).**
-These protect the *swapper* from sandwiches and leak no defense to the LP, who still bleeds
-to arbitrage. They also depend on traders changing their routing behaviour. Glyph protects
-the LP with zero behaviour change required from anyone, and works alongside these systems
-rather than competing for the same users.
+**No deployed design routes a sandwich surcharge to the sandwiched trader, in the same
+transaction, funded by the attacker.**
 
-**vs. permissioned or KYC-gated pools.**
-Allowlists achieve protection by destroying permissionlessness, which caps them to
-institutional niches. Glyph keeps the pool open to literally everyone, including the bots,
-and lets the price do the work. Graded and recoverable beats binary and permanent on both
-adoption and fairness.
+The nearest prior art is [MEVictim Rebate](https://ethglobal.com/showcase/mevictim-rebate-qsxak),
+which identifies victims *retrospectively* with a subgraph and an Axiom circuit, then mints
+them an ERC-721 that qualifies for a rebate when they later provide liquidity. Three
+differences, and each one matters:
 
-### The durable advantages
+1. **When.** MEVictim identifies victims after the fact, off-chain. Glyph detects the sandwich
+   shape inside `afterSwap`, in the block it happens.
+2. **Who pays.** MEVictim's rebate is an LP incentive — the protocol funds it. Glyph's rebate
+   is taken from the attacker's closing leg through `afterSwapReturnDelta` and
+   `poolManager.take`. **The attacker funds the victim.**
+3. **What the victim must do.** MEVictim requires becoming an LP to collect. Glyph escrows to
+   the victim's address; they call `claim` and are paid.
 
-1. **The data moat.** Contracts can be forked in an afternoon; the registry's accumulated
-   behavioural history and the live network of pools writing into it cannot. Every day of
-   operation widens the gap between Glyph and a fresh fork starting from an empty registry.
-2. **Network effects none of the alternatives have.** Every additional pool makes detection
-   faster and broader for all pools; every additional reader (lending, perps, RFQ) makes a
-   high score more expensive to carry. Single-pool defenses get linearly better at best;
-   Glyph compounds.
-3. **A primitive, not a feature.** Competitors ship a fee curve. Glyph ships a reputation
-   layer whose first consumer is a fee curve. The addressable surface (any protocol that
-   prices counterparty risk) is an order of magnitude larger than the hook market alone.
-4. **Complementarity as strategy.** Because Glyph occupies an empty axis (identity), every
-   "competitor" is actually a potential stack-mate. There is no incumbent it must displace
-   to win, which is the cheapest possible adoption path.
-5. **Aligned cost structure.** The honest majority pays nothing extra, ever. Defenses that
-   spread their cost across all users (volatility fees, auction overhead, routing friction)
-   fight their own users; Glyph's cost lands only on extractors, so no constituency pushes
-   back on adoption.
-6. **First-mover on an inevitable idea.** Identity-priced counterparty risk is how every
-   mature market works. Someone will own this primitive on-chain; the registry that gets to
-   critical pool mass first becomes the default, and Glyph is live while the idea is still
-   uncontested.
+This is the point where the field consistently stops, and it is worth being explicit about
+why it matters. **Every other MEV hook that charges a sandwicher more routes the money to
+liquidity providers** — DetoxHook donates 80% to LPs, and that is the norm. But the LP is not
+who a sandwich harms. The trader in the middle is. Paying LPs leaves the injured party exactly
+as badly off as before and merely relocates the extraction.
 
-## Technology bridges (ecosystem integration, not just usage)
+---
 
-Glyph is also a working demonstration of three ecosystem technologies doing jobs only they
-can do — each one load-bearing, none decorative:
+## Where Glyph *is* new — L3
 
-- **Uniswap v4 hooks + dynamic fees on Unichain** — the only AMM architecture where
-  per-swap, per-identity fee override is possible at all, deployed against Unichain's
-  canonical PoolManager. Unichain's one-second blocks are what let the defense land
-  mid-attack instead of after it, and its fee economics make a continuously-running keeper
-  affordable.
-- **Reactive Network** — solves cross-pool (and tomorrow, cross-chain) propagation without
-  any off-chain relayer trust: one subscription to the registry covers every pool that
-  will ever deploy, aggregation runs off the origin chain at zero gas cost to pools, and
-  only threshold crossings travel back as callbacks.
-- **Brevis ZK coprocessor** — makes the *history* component of a score trustlessly provable
-  rather than attested, the long-term answer to "why should I trust the detector?".
-- **Pyth** — first-touch protection for brand-new attackers with no history yet: anomalous
-  price impact versus the oracle overrides to max fee instantly.
+**Reputation inverted into a discount is, as far as we can find, unprecedented in a v4 hook.**
 
-A reputation layer needs exactly these four legs — programmable fees, event-driven
-propagation, provable history, and a real-time price reference. Glyph is what they look like
-assembled.
+Every reputation-flavoured design — including Glyph v1 — makes the clean state the default and
+the default free. That is what makes wallet rotation a complete reset, and it is the flaw the
+UHI9 judge identified in one sentence.
+
+Glyph v2 inverts it. Unknown identities pay a size-scaled premium; proven-benign history earns
+the fee *down*, below base, to a 0.05% floor. Rotating a wallet no longer returns an attacker
+to free. **It returns them to unproven**, and forfeits trust that took ten settled swaps and
+thirty days of non-decay to accumulate.
+
+The sybil objection cannot reach a mechanism where the fresh-wallet state is the expensive one.
+
+---
+
+## Where Glyph is new as a *system*
+
+The three layers are ordered by how much identity they need, and the first two need none:
+
+```
+L1  divergence + direction    identity-free    fires on trade #1 of a brand-new wallet
+L2  same-block sandwich       identity-free    within a block, addresses need not be known
+L3  reputation                identity-based   discount only; never the defence
+```
+
+Even if the identity layer is sybilled completely, L1 and L2 still fire at full strength. No
+other design in the table degrades gracefully in that direction, because no other design has
+more than one layer.
+
+---
+
+## Durable advantages
+
+1. **The cost falls only on extraction.** Volatility-reactive fees raise the price for
+   everyone precisely when honest traders most need to trade. Glyph's honest-flow price is
+   0.30% in every market condition, and 0.05% once earned. No constituency pushes back on
+   adoption.
+2. **It composes rather than competes.** A pool can run volatility-reactive *and* Glyph;
+   private order flow keeps protecting swappers while Glyph protects LPs and pays victims.
+   There is no incumbent to displace.
+3. **The registry is a primitive, not a feature.** `ReputationRegistry` is a standalone
+   contract any protocol can read — lending markets pricing borrowers, perps venues tiering
+   takers, RFQ systems filtering flow. The hook is its first consumer, not its only one.
+4. **Cross-pool coverage is O(1).** One Reactive subscription covers every Glyph pool that
+   will ever deploy, and propagation is gated on *distinct* pools so a repeat offender in one
+   venue does not spam the network.
+5. **Every claim is checkable.** The fee decomposition is in the event log, the contracts are
+   `exact_match` on Sourcify, and the two transactions that carry the central argument are
+   public.
+
+---
+
+## What we would concede in a Q&A
+
+- **L1 is a better-tuned version of an idea that already exists.** We think the tuning matters
+  and can show why, but we did not invent oracle-divergence capture.
+- **L1 needs an oracle.** Nezlobin's approach does not.
+- **The demo pool prices against a settable reference, not Pyth**, because mock tokens have no
+  feed. `PythPriceOracle` is deployed and verified beside it; the hook cannot tell them apart.
+- **Sandwich detection has a bounded, named false positive** — a trader reversing their own
+  position around unrelated flow. Tested as
+  `test_knownFalsePositive_selfReversalAroundUnrelatedFlow`.
+
+See [04 — Users and positioning](04-USERS-AND-POSITIONING.md) for who this is for.

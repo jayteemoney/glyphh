@@ -24,13 +24,23 @@ Nothing is simulated. Everything is read from the contracts listed in
 Two transactions, same pool, same divergence, opposite directions:
 
 ```bash
-cast receipt 0x7e6995a11586e53a3457c66fabe67bbac4db9de0231d11ce5db977e6c13ad9d2 \
-  --rpc-url https://sepolia.unichain.org   # closes the gap  -> 0.846%
-cast receipt 0x18ec04c00a8dbc7a5c8b2dced495a4a4c8eec05299b7d75e3d619a93e4e1d3a5 \
+cast receipt 0xd4ecdc36bae6b432f7297f2cd3df122c88d1ef5b6ebc98c3618aa1ab8aa7620d \
+  --rpc-url https://sepolia.unichain.org   # closes the gap  -> 0.666%
+cast receipt 0xd02e2a2e804aff6709eeed971c86f631d44a5cf0c21a5df20834d97514a666ad \
   --rpc-url https://sepolia.unichain.org   # widens it       -> 0.300%
 ```
 
-Decode the `FeeQuoted` event in each and compare the `arb` term. One is 5460, the other is 0.
+Decode the `FeeQuoted` event in each and compare the `arb` term. One is 3660, the other is 0.
+
+Or reproduce the pair yourself against the live pool:
+
+```bash
+cd contract
+forge script script/DirectionalDemo.s.sol --rpc-url $UNICHAIN_SEPOLIA_RPC_URL --broadcast --slow
+```
+
+It moves the reference 1% below the pool, swaps once in each direction, and the two
+`FeeQuoted` events tell you the rest.
 
 ---
 
@@ -42,7 +52,8 @@ Decode the `FeeQuoted` event in each and compare the `arb` term. One is 5460, th
 git clone https://github.com/jayteemoney/glyphh && cd glyphh/contract
 forge install
 forge build
-forge test              # 157 passing
+forge test              # 181 passing
+forge coverage --ir-minimum --no-match-coverage "(test|script)"   # 94% lines
 ```
 
 ### 2. Bring up the stack
@@ -82,8 +93,13 @@ cast send $ORACLE_ADDRESS "setPrice(bytes32,uint256,bool)" $POOL_ID 990000000000
 npx tsx attacker_bot.ts
 ```
 
-The fee jumps. **Then swap the other way and it does not** — same pool, same divergence, same
-wallet. That contrast is the mechanism: Glyph charges for closing the gap, never for widening it.
+The fee jumps to **0.666%**. **Then swap the other way and it stays at 0.300%** — same pool,
+same divergence, same size, same wallet. That contrast is the mechanism: Glyph charges for
+closing the gap, never for widening it.
+
+The 1% is chosen so the gap clears the 40 bp tolerance. Try `0.998e18` instead (20 bps of
+divergence) and *neither* direction is surcharged — that is deliberate, and
+[BACKTEST.md](BACKTEST.md) explains why the threshold sits where it does.
 
 ### 5. Watch a sandwich pay its victim — L2
 
@@ -127,7 +143,30 @@ Run the keeper to close the loop with no human in it:
 python -m detector.keeper
 ```
 
-### 7. See it in the dashboard
+### 7. Reproduce the backtest
+
+The claim that Glyph returns 82% of gross arbitrage to LPs, against 54% for a plain pool, is
+not a brochure number — it is a script, and it takes about a minute to re-derive.
+
+```bash
+cd ai/backtest
+python3 fetch.py 30        # 30 days of real ETH/USD, 1-minute, no API key needed
+python3 lvr.py             # the headline table
+python3 sweep.py           # the tolerance sweep that changed the contract
+python3 sensitivity.py     # nine parameter combinations, to see what survives
+```
+
+The Python fee model is a mirror of `FlowRisk.sol`. To convince yourself it has not drifted:
+
+```bash
+cd contract && forge test --match-contract FlowRiskParity   # exports 2,500 vectors from the EVM
+cd ../ai && python -m pytest tests/test_parity.py           # asserts every one of them
+```
+
+See [BACKTEST.md](BACKTEST.md) for what the numbers mean and what the simulation does *not*
+model.
+
+### 8. See it in the dashboard
 
 ```bash
 cd ../frontend
@@ -143,13 +182,13 @@ pnpm dev                       # http://localhost:3000/dashboard
 Every swap emits `FeeQuoted` with each term separate:
 
 ```
-base=3000  arb=5460  unproven=0  toxic=0  trustDiscount=0  finalFee=8460
+base=3000  arb=3660  unproven=0  toxic=0  trustDiscount=0  finalFee=6660
 ```
 
 | Term | What it means | How to avoid it |
 |---|---|---|
 | `base` | The pool's ordinary fee, 0.30%. | — |
-| `arb` | You closed a gap between the pool and its reference. | Don't arbitrage this pool, or accept that LPs keep 60% of it. |
+| `arb` | You closed a gap between the pool and its reference, and the gap was wider than 40 bps. | Don't arbitrage this pool, or accept that LPs keep 60% of the excess. Inside 40 bps you are never charged, in either direction. |
 | `unproven` | A large swap from a wallet with no record. Small swaps never pay this. | Build history, or trade smaller relative to liquidity. |
 | `toxic` | The detector has flagged this wallet. Decays to zero over 7 days. | Stop. It fades on its own. |
 | `trustDiscount` | Subtracted. Earned by settled benign volume over time. | Keep supplying uninformed flow. Decays over 30 days. |
@@ -175,3 +214,11 @@ retry.
 `getHookPermissions()` disagree, `BaseGlyphHook`'s constructor rejects the deployment — by
 design. v2 needs `beforeSwap | afterSwap | afterSwapReturnDelta`, so the address must end in a
 byte equal to **196**.
+
+**A swap you expected to be surcharged wasn't.** The arbitrage premium only fires above **40
+bps** of divergence. That threshold is not arbitrary: below the base fee of 30 bps, closing the
+gap does not cover the fee, so there is no arbitrage there to charge for — only uninformed flow
+that happens to move the right way. See [BACKTEST.md](BACKTEST.md).
+
+**`forge coverage` fails with "Stack too deep".** Coverage disables the optimizer. Add
+`--ir-minimum`.

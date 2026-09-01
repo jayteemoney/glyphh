@@ -19,7 +19,7 @@ cd contract && DEPLOYER_PRIVATE_KEY=0xac09…ff80 \
 
 # 2. Paste addresses into demo/.env and frontend/.env.local
 # 3. Frontend up at localhost:3000/dashboard, wallet connected
-# 4. forge test in a spare pane, already green at 157
+# 4. forge test in a spare pane, already green at 181
 ```
 
 **Pane layout:** terminal left, dashboard right. Both visible the whole time. Never alt-tab to
@@ -65,7 +65,7 @@ That last line is the pitch. Land it, then prove it immediately.
 cast send $ORACLE_ADDRESS "setPrice(bytes32,uint256,bool)" $POOL_ID 990000000000000000 true …
 ```
 
-**Swap in the gap-closing direction.** Dashboard row appears: `arb 5460`, final **0.846%**.
+**Swap in the gap-closing direction.** Dashboard row appears: `arb 3660`, final **0.666%**.
 
 > "This swap closed the gap. It paid 0.85%."
 
@@ -137,7 +137,7 @@ Scroll to `getHookPermissions`, one beat:
 > beside it.
 >
 > Everything you just saw is live on Unichain Sepolia. Six contracts, verified, transaction
-> hashes in the repo. 157 tests. Thanks for watching."
+> hashes in the repo. 181 tests. Thanks for watching."
 
 ---
 
@@ -160,10 +160,10 @@ A calm recovery reads as competence. A restart eats a take.
 |---|---|---|
 | 0:00 | LVR, in one sentence | quiet dashboard |
 | 0:30 | Price the swap, not the swapper | still dashboard |
-| 0:55 | Gap-closing swap → 0.846% | terminal + new row |
+| 0:55 | Gap-closing swap → 0.666% | terminal + new row |
 | 1:15 | Gap-widening swap → 0.300% | second row beside it |
 | 1:35 | Sandwich staged | stats tick up |
 | 1:50 | Victim claims, balance rises | wallet |
 | 2:05 | `_divergence`, in your words | editor |
 | 2:35 | Three disclosed limits | dashboard |
-| 2:50 | Live, verified, 157 tests | deployment doc |
+| 2:50 | Live, verified, 181 tests | deployment doc |

@@ -21,15 +21,45 @@ difference is **direction**:
 
 | Swap | base | arb | final fee |
 |---|---|---|---|
-| [Closes the oracle gap](https://sepolia.uniscan.xyz/tx/0x7e6995a11586e53a3457c66fabe67bbac4db9de0231d11ce5db977e6c13ad9d2) (arbitrage) | 3000 | **5460** | **0.846%** |
-| [Widens it](https://sepolia.uniscan.xyz/tx/0x18ec04c00a8dbc7a5c8b2dced495a4a4c8eec05299b7d75e3d619a93e4e1d3a5) (uninformed flow) | 3000 | 0 | **0.300%** |
+| [Closes the oracle gap](https://sepolia.uniscan.xyz/tx/0xd4ecdc36bae6b432f7297f2cd3df122c88d1ef5b6ebc98c3618aa1ab8aa7620d) (arbitrage) | 3000 | **3660** | **0.666%** |
+| [Widens it](https://sepolia.uniscan.xyz/tx/0xd02e2a2e804aff6709eeed971c86f631d44a5cf0c21a5df20834d97514a666ad) (uninformed flow) | 3000 | 0 | **0.300%** |
 
-The swap capturing the divergence — the arbitrage LPs actually lose to — pays 0.846%. The swap
+The swap capturing the divergence — the arbitrage LPs actually lose to — pays 0.666%. The swap
 supplying the uninformed order flow LPs *want* pays the base rate. Both are decodable from the
 hook's own `FeeQuoted` events by anyone.
 
-The premium is arithmetic, not a fudge factor: divergence measured **101 bps**, less a 10 bp
-noise band leaves **91 bps**, at 60% capture that is **5460**. The number on chain is 5460.
+The premium is arithmetic, not a fudge factor: divergence measured **101 bps**, less the 40 bp
+tolerance leaves **61 bps**, at 60% capture that is **3660**. The number on chain is 3660.
+
+---
+
+## How much it matters
+
+Mechanism is not magnitude, so we measured it. `ai/backtest/lvr.py` replays **30 days of real
+ETH/USD** (43,200 minutes of Binance closes) through two identical pools whose only difference
+is the fee function.
+
+| | plain 0.30% pool | Glyph pool |
+|---|---:|---:|
+| gross arbitrage the **pool keeps** | 54.4% | **82.4%** |
+| kept by arbitrageurs | $188,209 | **$72,202** |
+| total to the pool, 30 days | $856,621 | **$999,895** |
+
+**+$143,274 to LPs over 30 days** on a $10M pool at 0.73× daily turnover — 17.4% of TVL
+annualised. The 77–88% capture holds across a 25× range of pool size and a 16× range of flow;
+the dollar figure scales with turnover, as all fee revenue does.
+
+And the cost to everyone else, which is the number that decides whether this is worth
+deploying: of 86,400 uninformed swaps, **1.05% were misread as arbitrage**. A further 0.44%
+paid the unproven-size premium, which is the design working rather than failing. **No swap that
+widened the gap paid a premium, at any size, from any wallet** — that one is guaranteed by
+construction and fuzz-tested.
+
+The backtest also **found a bug in our own fee model and changed the contract**:
+`ARB_TOLERANCE_BPS` shipped at 10 bps, which sits *inside* the pool's 30 bp no-arbitrage band —
+a region where no arbitrageur trades, so everything charged there was uninformed flow. It was
+taxing 44% of retail swaps. Retuned to 40 bps, that fell to 1.5%, and the hook was redeployed.
+Full method, sweep and sensitivity in [`docs/BACKTEST.md`](docs/BACKTEST.md).
 
 ---
 
@@ -74,9 +104,9 @@ LPs through v4's dynamic fee override. The remainder is taken as a hook delta
 Demonstrated on Unichain Sepolia:
 
 ```
-victim credited     4.8407191260309174 token0
-attacker flagged    toxicity 5000
-victim claimed      1100.0697 → 1104.9104 token0
+victim credited     4.840724788897067876 token0
+attacker flagged    toxicity 4999
+victim claimed      1104.910407 → 1109.751132 token0
 after claim         claimable 0, vault outstanding 0
 ```
 
@@ -137,10 +167,12 @@ contract/src/
   RebateVault.sol                escrow for sandwich victims
   oracles/                       PythPriceOracle (production) · SettablePriceOracle (demo)
   reactive/                      GlyphReactive (RSC) + GlyphCallbackAdapter
-contract/test/                   157 tests: unit, fuzz, invariant, end-to-end
+contract/test/                   181 tests: unit, fuzz, invariant, parity export, end-to-end
 ai/detector/                     toxicity model, trust model, EIP-712 attestor, keeper
+ai/backtest/                     30-day LVR replay against real ETH/USD; the fee model mirrored
+                                 and proven equal to the Solidity by ai/tests/test_parity.py
 frontend/                        Next.js dashboard: fee decomposition, rebate claim
-docs/                            deployment, runbook, user guide, demo script
+docs/                            problem, solution, ecosystem gap, backtest, deployment, guide
 ```
 
 ---
@@ -150,7 +182,7 @@ docs/                            deployment, runbook, user guide, demo script
 ```bash
 cd contract
 forge install && forge build
-forge test              # 157 passing
+forge test              # 181 passing
 ```
 
 Run the whole stack locally, including the layers the testnet demo shows:

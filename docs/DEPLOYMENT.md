@@ -1,14 +1,15 @@
 # Deployment — Glyph v2
 
-**Live on Unichain Sepolia (chainId 1301), deployed 20 August 2026.**
-All contracts verified on Sourcify with `exact_match`.
+**Live on Unichain Sepolia (chainId 1301).** Stack deployed 20 August 2026; the hook
+redeployed 1 September 2026 to carry the retuned arbitrage tolerance
+(see [BACKTEST.md](BACKTEST.md)). All contracts verified on Sourcify with `exact_match`.
 
 ## Addresses
 
 | Contract | Address | Verified |
 |---|---|---|
 | `ReputationRegistry` | [`0xbCC750228205f759Adca7289Ce3b4266610b634C`](https://sepolia.uniscan.xyz/address/0xbCC750228205f759Adca7289Ce3b4266610b634C) | exact_match |
-| `GlyphHook` | [`0x0B9dDceC50431E147FCcEcFcC4D7D9AE055F80C4`](https://sepolia.uniscan.xyz/address/0x0B9dDceC50431E147FCcEcFcC4D7D9AE055F80C4) | exact_match |
+| `GlyphHook` | [`0x34D408062792646fe085d746Fb64AE63435b80C4`](https://sepolia.uniscan.xyz/address/0x34D408062792646fe085d746Fb64AE63435b80C4) | exact_match |
 | `RebateVault` | [`0x29735121F2b4389018916574a5E6203f92807E63`](https://sepolia.uniscan.xyz/address/0x29735121F2b4389018916574a5E6203f92807E63) | exact_match |
 | `PythPriceOracle` | [`0x65083ff928736453eDbfDe5ECaC5D4d14B025926`](https://sepolia.uniscan.xyz/address/0x65083ff928736453eDbfDe5ECaC5D4d14B025926) | exact_match |
 | `SettablePriceOracle` | [`0xb17820Dca51842F8f211F0d340945e1Ef19B7Bc6`](https://sepolia.uniscan.xyz/address/0xb17820Dca51842F8f211F0d340945e1Ef19B7Bc6) | exact_match |
@@ -35,7 +36,7 @@ Total deploy cost: **0.0000039 ETH**.
 Read back from chain after deployment, not assumed from the script:
 
 ```
-hook authorized in registry   true
+hook authorized in registry   true   (and the superseded v2.0 hook revoked -> false)
 attestor authorized           true
 hook.vault()                  0x29735121F2b4389018916574a5E6203f92807E63
 hook.oracle()                 0xb17820Dca51842F8f211F0d340945e1Ef19B7Bc6
@@ -45,7 +46,7 @@ registry.reactiveProxy()      0xd683F42F686CF4b729d5599f6964A0C36e461495
 
 ## The hook address encodes its permissions
 
-`0x0B9dDceC…F80C4` ends in `0xC4` = **196** =
+`0x34D40806…5b80C4` ends in `0xC4` = **196** =
 `BEFORE_SWAP (128) | AFTER_SWAP (64) | AFTER_SWAP_RETURNS_DELTA (4)`.
 
 v4 derives a hook's permissions from the low bits of its address, so this is not a
@@ -56,6 +57,12 @@ and `getHookPermissions()` disagreed.
 **This is why v2 could not reuse the v1 pool.** `AFTER_SWAP_RETURNS_DELTA` is new in v2
 (it carries the sandwich rebate), so the v1 hook at `0x8B1b1d36…680c0` is a different
 address with different permission bits. Every pool had to be re-initialised.
+
+**And it is why retuning one constant meant redeploying.** `FlowRisk` is a library inlined
+into the hook, so changing `ARB_TOLERANCE_BPS` changes the hook's creation code, which changes
+its mined CREATE2 address, which means a new pool. Only the hook moved: the registry keeps its
+accumulated scores, the vault keeps its accounting, and the oracles, adapter and routers are
+unchanged — so every other address on this page is the one judges were already given.
 
 ## Why the demo pool does not price against Pyth
 
@@ -89,31 +96,38 @@ default to the Etherscan verifier regardless of `--verifier`.
 
 ## Verification transactions
 
-Three transactions a judge can check on Uniscan without running anything. Same pool, same
-block window, same 1% divergence between pool and reference price.
+Transactions a judge can check on Uniscan without running anything. Same pool, same block
+window, same 1% divergence between pool and reference price. Reproduce the pair with
+`forge script script/DirectionalDemo.s.sol`.
 
 | What | Transaction | Result |
 |---|---|---|
-| Clean flow, pool at reference | [`0x71440314…`](https://sepolia.uniscan.xyz/tx/0x71440314) ×4 | score stays 0, fee **0.300%** |
-| Move reference 1% below pool | [`0x676d4268c10555cea60fc3a185cd3cbe500784259d17b193b5791db7ca642fc2`](https://sepolia.uniscan.xyz/tx/0x676d4268c10555cea60fc3a185cd3cbe500784259d17b193b5791db7ca642fc2) | oracle now 0.99e18 |
-| **Gap-closing** swap (arbitrage) | [`0x7e6995a11586e53a3457c66fabe67bbac4db9de0231d11ce5db977e6c13ad9d2`](https://sepolia.uniscan.xyz/tx/0x7e6995a11586e53a3457c66fabe67bbac4db9de0231d11ce5db977e6c13ad9d2) | fee **0.846%** |
-| **Gap-widening** swap (uninformed) | [`0x18ec04c00a8dbc7a5c8b2dced495a4a4c8eec05299b7d75e3d619a93e4e1d3a5`](https://sepolia.uniscan.xyz/tx/0x18ec04c00a8dbc7a5c8b2dced495a4a4c8eec05299b7d75e3d619a93e4e1d3a5) | fee **0.300%** |
+| Move reference 1% below pool | [`0x26d436a1…84017`](https://sepolia.uniscan.xyz/tx/0x26d436a1f21537387a42bce5e96494c32854afcd224c2a8362b5044116284017) | oracle now 0.99e18 |
+| **Gap-closing** swap (arbitrage) | [`0xd4ecdc36bae6b432f7297f2cd3df122c88d1ef5b6ebc98c3618aa1ab8aa7620d`](https://sepolia.uniscan.xyz/tx/0xd4ecdc36bae6b432f7297f2cd3df122c88d1ef5b6ebc98c3618aa1ab8aa7620d) | fee **0.666%** |
+| **Gap-widening** swap (uninformed) | [`0xd02e2a2e804aff6709eeed971c86f631d44a5cf0c21a5df20834d97514a666ad`](https://sepolia.uniscan.xyz/tx/0xd02e2a2e804aff6709eeed971c86f631d44a5cf0c21a5df20834d97514a666ad) | fee **0.300%** |
 
 Decoded from the hook's own `FeeQuoted` events:
 
 ```
-GAP-CLOSING (arbitrage)      base=3000  arb=5460  unproven=0  toxic=0  trustDisc=0  finalFee=8460
+GAP-CLOSING (arbitrage)      base=3000  arb=3660  unproven=0  toxic=0  trustDisc=0  finalFee=6660
 GAP-WIDENING (uninformed)    base=3000  arb=0     unproven=0  toxic=0  trustDisc=0  finalFee=3000
 ```
 
 **This pair is the thesis.** Identical pool, identical divergence, identical size — the only
-difference is direction. The swap capturing the divergence pays 0.846%; the swap supplying
+difference is direction. The swap capturing the divergence pays 0.666%; the swap supplying
 uninformed flow pays the base 0.300%. Glyph prices *what the swap does to the pool*, not who
 sent it, which is why a fresh wallet cannot rotate out of it.
 
-The arb premium is also exactly what the model specifies, not approximately. Divergence
-measured 101 bps; less the 10 bp noise band leaves 91 bps of excess; at `ARB_CAPTURE_PCT = 60`
-that is `91 x 60 = 5460`. The number on chain is 5460.
+The premium is exactly what the model specifies, not approximately. Divergence measured
+**101 bps**; less the **40 bp** tolerance leaves **61 bps** of real excess; at
+`ARB_CAPTURE_PCT = 60` that is `61 x 60 = 3660`. The number on chain is 3660.
+
+Both raw event payloads, if you would rather decode them yourself than trust the table:
+
+```
+0x...0bb8  0x...0e4c  0x0  0x0  0x0  0x...1a04     # 3000, 3660, 0, 0, 0, 6660
+0x...0bb8  0x0        0x0  0x0  0x0  0x...0bb8     # 3000, 0,    0, 0, 0, 3000
+```
 
 ## Cross-pool: Reactive on Lasna
 
@@ -136,9 +150,9 @@ from an unauthorized address   -> reverts "Authorized sender only"
 
 | Step | Result |
 |---|---|
-| Sandwich staged against the live pool | victim credited **4.8407191260309174** token0 |
-| Attacker flagged | toxicity score **5000** |
-| Victim claims | balance `1100.0697` -> `1104.9104` token0 |
+| Sandwich staged against the live pool ([`0x060d7cb3…f54a`](https://sepolia.uniscan.xyz/tx/0x060d7cb38e6346c320be93c964eea9ae9634d09c1c370a6bbb810bc443ffc54a)) | victim credited **4.840724788897067876** token0 |
+| Attacker flagged | toxicity score **4999** |
+| Victim claims ([`0xd04af4d9…5304`](https://sepolia.uniscan.xyz/tx/0xd04af4d9e6ab6b9679bba2d9d8499176d40921e253bc85847f62986ad9bf5304)) | balance `1104.910407` -> `1109.751132` token0 |
 | After claim | `claimable` 0, vault `outstanding` 0 |
 
 The victim received exactly what was credited, and the vault settled to zero — the surcharge
@@ -167,8 +181,12 @@ middle leg would not read as a third party.
 
 ## Still outstanding
 
-- **Liquidity** — seeded: 100,000e18 across ticks -6000..6000. Routers:
+- **Liquidity** — seeded: 100,000e18 across ticks -60000..60000. Routers:
   `PoolSwapTest 0x4e08F05481fE0be55bF148eca8C7a5D8883b2Bd7`,
   `PoolModifyLiquidityTest 0x51cA6FE978b27a352c0d4eF2185f24aF0aB1f171`.
-  Pool id `0x0179ffe588f6dc908f636ecdb3d31ef77d7c3a94e782db3a7f858b03b6c6ce18`.
-- Nothing blocking. Frontend still to be pointed at the new deployment.
+  Pool id `0xb86567cd923105facf7c9e0949c7d9cde93f4a3b21114986280c546247555329`.
+- **Frontend** — pointed at this deployment and live at
+  [glyphh-alpha.vercel.app](https://glyphh-alpha.vercel.app).
+- **Known gap, disclosed:** the Reactive cross-pool callback has been exercised from both sides
+  of its authorization boundary, but has not yet fired end-to-end from a real flag in one pool
+  to a repricing in another. It is the one claim on this page without a transaction hash.

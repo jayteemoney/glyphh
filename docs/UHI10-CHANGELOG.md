@@ -34,7 +34,7 @@ judge identified, and everything below follows from it.
 | **`afterSwapReturnDelta` + `poolManager.take`** for the rebate path. | Real flash accounting. `take` leaves the hook owing; the returned delta credits it; they net to zero and the swapper is debited. |
 | **EIP-1153 transient storage** (`SwapGuard`), with a per-leg sequence number. | v1 kept swap state in a persistent mapping keyed `(poolId, tx.origin)`, so a multi-hop route through one pool had the second leg read the first leg's fee. Proven fixed by `test_multiHop_legsDoNotCollide`. |
 | **`IPriceOracle` adapter seam.** | The hook depends on an interface, not on Pyth. A second source can be added without touching `GlyphHook` — and it is why the divergence path is testable at all. |
-| **Tests: 69 → 157**, plus 19 Python. Mock oracle, fuzz over the whole fee model, invariant bounds, negative sandwich cases. | v1's toxicity branch had *zero* coverage: every test constructed the hook with `IPyth(address(0))`. |
+| **Tests: 69 → 181**, plus 41 Python, at 94% line coverage. Mock oracle and mock Pyth, fuzz over the whole fee model, invariant bounds, negative sandwich cases. | v1's toxicity branch had *zero* coverage: every test constructed the hook with `IPyth(address(0))`, and v1's production Pyth adapter was never exercised at all. |
 
 ## Functionality
 
@@ -44,6 +44,8 @@ judge identified, and everything below follows from it.
 | **Severity carries the measured divergence**, not the constant threshold. | v1 scored a 10,000 bp attack and a 201 bp one identically. |
 | **`reportToxicSwap` keyed on the real `PoolId`.** | v1 passed the hook's own address, so every pool behind one hook reported as one pool and cross-pool aggregation could not distinguish them. |
 | **Sandwiches that don't start the block are now detected.** Sliding two-swap window replaces single-opener tracking. | Real blocks carry unrelated flow ahead of an attack, so the original design would have missed essentially every real sandwich. Test written failing first. |
+| **`src/` compiles warning-free.** Every narrowing cast and `block.timestamp` comparison carries a justification and a scoped lint directive; the remaining warnings are all in `script/` and `test/` and are deliberate. | 35 warnings down to 0 in the code that ships. A reviewer reading `FlowRisk` sees why each cast is safe rather than having to prove it. |
+| **Deleted `ToxicityScoring.sol`**, v1's fee curve, superseded by `FlowRisk` and referenced by nothing but its own test. | Dead code in `src/` is a claim that something is load-bearing when it is not. |
 | **Deployed and verified**: six contracts on Unichain Sepolia, all `exact_match` on Sourcify; `GlyphReactive` live on Lasna and funded. | The configured explorer key was a 5-character placeholder that returns HTML — Etherscan verification was never going to work. Sourcify needs no key and proves bytecode came from exactly this source. |
 | **Fixed a frontend backfill that silently rendered an empty dashboard.** The RPC caps `eth_getLogs` between 10k and 50k blocks and returns HTTP 400 rather than truncating; the `catch` turned that into "no activity yet". | Would have shown a blank dashboard during the demo. Chunked reader verified live: 11 `FeeQuoted`, 1 `SandwichDetected`, 1 `ToxicSwapReported`. |
 | **Lint clean**, mount guards rebuilt on `useSyncExternalStore`. | CI green. |
@@ -52,8 +54,10 @@ judge identified, and everything below follows from it.
 
 | Change | Why it matters |
 |---|---|
-| **Every claim is reproducible on a public chain**, with transaction hashes in `docs/DEPLOYMENT.md`. | The directional pair (0.846% vs 0.300%), the sandwich rebate paid and claimed, the callback authorization boundary — all verifiable without running anything. |
+| **Every claim is reproducible on a public chain**, with transaction hashes in `docs/DEPLOYMENT.md`. | The directional pair (0.666% vs 0.300%), the sandwich rebate paid and claimed, the callback authorization boundary — all verifiable without running anything. |
 | **Cross-pool propagation became real**, gated on distinct pools. | v1's second headline claim could not have survived a judge checking it. |
+| **A 30-day backtest against real ETH/USD**, with the fee model proven equal to the deployed Solidity by a 2,500-vector parity test. | Turns "the mechanism is right" into "the pool keeps 82% of gross arbitrage instead of 54%, and 1.05% of uninformed swaps are misread". Mechanism without magnitude is an assertion. |
+| **The backtest found a flaw in our own fee model, and we changed the contract.** `ARB_TOLERANCE_BPS` shipped at 10 bps, inside the pool's 30 bp no-arbitrage band — a region with no arbitrage to catch — so it was surcharging **44% of uninformed swaps**. Retuned to 40 bps: 1.5%. Hook redeployed 1 Sep. | The reasoning that produced 10 bps ("that's oracle noise") was locally sensible and globally wrong. The relationship is now pinned by `test_arb_toleranceClearsTheNoArbitrageBand` so it cannot be silently undone. |
 | **`FeeQuoted` emits every term separately.** | Turns "the model is fair" into something a trader can audit line by line, and gives the detector an *exact* record of which swaps were uninformed — for one log scan instead of replaying oracle history. |
 
 ## Presentation
@@ -63,6 +67,8 @@ judge identified, and everything below follows from it.
 | **Dashboard shows why a swap was priced**, not just what it cost — stacked bar per swap, with a plain-language reason. | UHI9's presentation score was the single largest gap. |
 | **Rebate claim in the UI.** | A judge can connect a wallet and be paid. |
 | **Disclosed limitations in the README**, each with its production path, rather than left for a judge to find. | Technical judges reward disclosed constraints and punish discovered ones. |
+| **`docs/03-ECOSYSTEM-GAP.md` names its own prior art first** — DetoxHook for oracle-divergence capture, Nezlobin for directional fees, MEVictim Rebate for victim compensation — and says plainly which layer is a refinement rather than an invention. | The fastest way to lose a technical panel is to have them name your prior art before you do. L1 is a better-tuned version of a known idea; L2 and L3 are the new ones, and separating them is what makes the claim credible. |
+| **Purged six v1-era docs** that still argued the reputation-first thesis. `docs/README.md` opened with "prices each swap by *who* is trading" — the exact framing the UHI9 judge broke. | A judge who opened the docs folder read v1's defence of the thing v2 exists to fix. |
 
 ---
 

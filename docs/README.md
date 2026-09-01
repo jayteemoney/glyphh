@@ -1,34 +1,38 @@
 # Glyph documentation
 
-**Glyph is the first Uniswap v4 hook that prices each swap by *who* is trading, not just what.**
-This folder is the complete written case for the project — for judges, reviewers, and anyone
-evaluating it.
+**A Uniswap v4 hook that prices a swap by what it does to the pool — not by who sent it.**
+
+This folder is the written case for the project. The repository [`README`](../README.md) is
+the two-minute version; these are the arguments behind it.
 
 ## Read in this order
 
 | Doc | What it answers |
 |---|---|
-| [01 — The problem](01-PROBLEM.md) | What is bleeding LPs dry, and why nothing on the market stops it |
-| [02 — The solution](02-SOLUTION.md) | How Glyph works, end to end, with live verified numbers |
-| [03 — The ecosystem gap](03-ECOSYSTEM-GAP.md) | The landscape of LP defenses and the axis they all miss |
-| [04 — Who it's for & positioning](04-USERS-AND-POSITIONING.md) | The users, the wedge, and why this compounds into a moat |
-| [05 — UHI submission fit](05-UHI-SUBMISSION.md) | Theme and judging alignment, plus the Reactive and Unichain integrations in depth |
-| [06 — User guide](06-USER-GUIDE.md) | How to actually use it: visitors, traders, LPs, pool deployers, operators, integrators |
+| [01 — The problem](01-PROBLEM.md) | What bleeds LPs, and why every existing defence misses it |
+| [02 — The solution](02-SOLUTION.md) | The three layers, the fee arithmetic, and the live numbers |
+| [03 — The ecosystem gap](03-ECOSYSTEM-GAP.md) | Named prior art, what Glyph did not invent, and what it did |
+| [04 — Users and positioning](04-USERS-AND-POSITIONING.md) | Who this is for and why it compounds |
 
-## Reference docs
+## Reference
 
 | Doc | Contents |
 |---|---|
-| [CONTRACT_GUIDE.md](CONTRACT_GUIDE.md) | Contract-level architecture and interfaces |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Live testnet addresses (single source of truth) + verification txs |
-| [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | The 3-minute demo video runbook, timed and verified |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Live addresses (single source of truth) + the transactions that prove each claim |
+| [USER-GUIDE.md](USER-GUIDE.md) | Cold clone to claimed rebate, local and on testnet |
+| [DEPLOY-RUNBOOK.md](DEPLOY-RUNBOOK.md) | Reproducing the deployment |
+| [BACKTEST.md](BACKTEST.md) | What the fee model does to real historical flow |
+| [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | The three-minute demo, timed |
+| [UHI10-CHANGELOG.md](UHI10-CHANGELOG.md) | Every v2 change mapped to the judging criterion it serves |
 
 ## The thesis in three sentences
 
-Passive AMM liquidity is adversely selected: arbitrageurs, sandwichers and MEV bots extract
-value from LPs on every block, and every existing defense reacts to *symptoms* — price,
-volatility, order size — never to the *agent* causing them. Glyph gives every wallet an
-on-chain reputation score and makes the swap fee a function of it: honest flow pays 0.30%,
-toxic flow pays up to 10%, and the entire premium is credited to LPs in the same transaction.
-A wallet flagged in one pool is repriced in every Glyph pool within seconds — and because
-scores decay to zero over seven days, it's a price, not a blacklist.
+Passive AMM liquidity is adversely selected: the swaps that trade against it most profitably
+are the ones that know something it doesn't, and every existing defence prices a *proxy* for
+that — volatility, order size, price drift — or prices the *sender*, which anyone can change
+for the cost of a fresh wallet. Glyph prices the thing itself: a swap that moves the pool
+toward the true price is capturing the divergence and pays 60% of what it closes, while a swap
+that moves the pool away pays the base rate at any size from any wallet. On top of that, a
+sandwich's closing leg is surcharged and the money is escrowed **to the trader it squeezed**,
+and flow that has proven itself over time earns the fee *down* to 0.05% — so rotating a wallet
+no longer returns an attacker to free, it returns them to unproven.

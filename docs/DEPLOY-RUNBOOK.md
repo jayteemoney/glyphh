@@ -68,7 +68,7 @@ that faucet is slow, this is the step to start early.
 
 ```bash
 cd contract
-forge test            # expect 157 passing
+forge test            # expect 181 passing
 forge build
 ```
 

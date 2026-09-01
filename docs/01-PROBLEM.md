@@ -33,33 +33,53 @@ The result is a structural tax with three downstream effects:
 
 ## Why the existing answers don't close the gap
 
-Every deployed defense reacts to a **symptom** of toxicity, never to the **agent**:
+Every deployed defence reacts to a **symptom** of toxicity — a market condition that correlates
+with extraction — or, in the reputation designs, to the **sender**:
 
-| Defense | Watches | Blind spot |
+| Defence | Watches | Blind spot |
 |---|---|---|
-| Static fee tiers (0.05/0.30/1%) | Nothing — set once | One fee for sharks and minnows alike |
-| Volatility-reactive hooks (e.g. AdaptiveSwap) | Realized volatility | Penalizes *all* traders when markets move — including the honest ones |
-| Oracle-divergence hooks (e.g. DetoxHook) | Pool-vs-Pyth price gap | Only catches stale-price arbitrage, and only *while* the gap exists |
-| Private order flow / MEV protection RPCs | The victim's transaction | Protects the *swapper* from sandwiches; does nothing for the *LP* against arb flow |
-| Auction-based designs (am-AMM, MEV taxes) | The right to extract | Redistributes MEV, doesn't reprice the extractor; research-stage complexity |
+| Static fee tiers (0.05/0.30/1%) | nothing — set once | one fee for sharks and minnows alike |
+| Volatility-reactive hooks (AdaptiveSwap) | realized volatility | penalizes *all* traders when markets move, including the honest ones |
+| Directional fees (Nezlobin) | the pool's own recent price drift | a backward-looking proxy; prices a direction, not the gap actually on the table |
+| Oracle-divergence capture (DetoxHook) | pool-vs-Pyth gap | thresholded at ~2%, so the ordinary case goes uncharged; the value goes to LPs |
+| Private order flow / MEV-protect RPCs | the victim's transaction | protects the *swapper* from sandwiches; does nothing for the LP against arb flow |
+| Auction designs (am-AMM, MEV taxes) | the right to extract | redistributes MEV rather than repricing it; needs new market infrastructure |
+| Reputation designs (including Glyph **v1**) | the sender's history | the clean state is the default and the default is free, so rotating wallets resets it |
 
-Two failures are common to all of them:
+The last row is the one worth dwelling on, because it is the trap Glyph itself fell into. If
+being unknown is free, then every defence built on knowing who someone is can be defeated by
+becoming unknown again. The cost of a fresh EOA is a few cents of gas.
 
-- **Amnesia.** Every swap is evaluated in isolation. A bot that sandwiched a pool a thousand
-  times pays the same fee on swap 1,001. There is no memory, so there is no deterrence.
-- **Locality.** Each pool defends itself alone. An attacker priced out of (or detected in)
-  one pool simply rotates to the next one. Defense doesn't propagate; attacks do.
+And two failures run across the whole table:
+
+- **The signal is a proxy.** Volatility, order size and price drift *correlate* with
+  extraction. None of them *is* extraction, so each one misprices in both directions: honest
+  traders pay for conditions they did not create, and a patient extractor waits for the
+  conditions to pass.
+- **Locality.** Each pool defends itself alone. An attacker priced out of one pool simply
+  rotates to the next. Defence doesn't propagate; attacks do.
 
 ## The question Glyph asks
 
-Markets solved this problem centuries ago: counterparties have *reputations*, and known-bad
-actors get worse prices or no quote at all. On-chain, the entire behavioral history of every
-wallet is public — yet no AMM uses it.
+Every defence in the table above shares one assumption: that you can tell a toxic swap from an
+honest one by looking at the *market* — the volatility, the price gap, the order size — or by
+looking at the *sender*. The first is a proxy. The second is spoofable by anyone willing to
+fund a fresh wallet.
 
-**What if the pool could remember? What if every pool remembered for every other?**
+There is a third thing to look at, and it is neither:
 
-That is the gap Glyph fills: a per-wallet, decaying, on-chain reputation score — written by an
-ML detector, by the pools themselves, and by a cross-pool aggregation network — that the hook
-turns directly into the swap fee, with the toxicity premium routed back to the LPs who bear
-the cost. The problem is adverse selection; the missing primitive is identity-priced
-liquidity. See [02 — The solution](02-SOLUTION.md).
+> **What does this swap do to the pool?**
+
+A swap that moves the pool toward the true price is, by definition, capturing the divergence —
+that is what LVR *is*, mechanically, not as a proxy for it. A swap that moves the pool away is
+supplying the uninformed order flow LPs earn from. The distinction is available in `beforeSwap`
+from two numbers neither the swapper nor the router controls: the pool's own `slot0` and a
+reference price.
+
+That question needs no identity to answer, which is why it survives wallet rotation. And it
+generalises: the same "what did this do" framing identifies a sandwich from the *shape* of
+three legs in a block, without knowing who sent any of them.
+
+Reputation still has a job, but a smaller and better-chosen one — not deciding who is
+dangerous, only rewarding who has proven they are not. See
+[02 — The solution](02-SOLUTION.md).
