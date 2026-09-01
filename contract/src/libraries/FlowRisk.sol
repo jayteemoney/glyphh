@@ -38,8 +38,24 @@ library FlowRisk {
 
     // ── L1: directional arbitrage premium ─────────────────────────────────────
 
-    /// @notice Divergence below this is oracle noise and is never surcharged.
-    uint256 internal constant ARB_TOLERANCE_BPS = 10; // 0.10%
+    /// @notice Divergence below this is never surcharged.
+    /// @dev    Set from evidence, not from intuition. The obvious reading of this constant is
+    ///         "oracle noise", which argues for something small — v2 shipped 10 bps on exactly
+    ///         that reasoning. Replaying 30 days of real ETH/USD through the model
+    ///         (`ai/backtest/lvr.py`) showed why that is wrong.
+    ///
+    ///         A pool's no-arbitrage band is set by its *base fee*: below 30 bps of divergence
+    ///         no rational arbitrageur trades at all, because the gap does not cover the fee.
+    ///         So a tolerance inside that band cannot catch arbitrage — there is none to catch
+    ///         — and lands solely on uninformed swaps that happen to move toward the reference,
+    ///         which is roughly half of them. Measured: at 10 bps, **44% of uninformed swaps**
+    ///         paid a premium. At 40 bps, 1.6% do, and the pool still keeps 82% of gross
+    ///         arbitrage instead of 90%.
+    ///
+    ///         40 = BASE_FEE (30 bps) + a 10 bp cushion, because the arbitrageur's own trade
+    ///         leaves the price sitting on the band edge and uninformed flow jitters it across.
+    ///         See `docs/BACKTEST.md` for the sweep this came from.
+    uint256 internal constant ARB_TOLERANCE_BPS = 40; // 0.40% = base fee + cushion
 
     /// @notice Share of the arbitrage the pool claws back, in percent. At 60, a swap closing
     ///         a 50 bp gap is charged 0.60 * 40 bp = 24 bp on top of base.
@@ -68,6 +84,8 @@ library FlowRisk {
             // 1 bp == 100 fee units; charging ARB_CAPTURE_PCT percent of the excess gives
             // excessBps * 100 * pct / 100 == excessBps * pct.
             uint256 raw = excessBps * ARB_CAPTURE_PCT;
+            // Safe: raw is clamped to ARB_PREMIUM_CAP, which fits uint24.
+            // forge-lint: disable-next-line(unsafe-typecast)
             premium = raw > ARB_PREMIUM_CAP ? ARB_PREMIUM_CAP : uint24(raw);
         }
     }
@@ -98,6 +116,8 @@ library FlowRisk {
 
         unchecked {
             uint256 raw = (sizeBps - UNPROVEN_FREE_SIZE_BPS) * UNPROVEN_SLOPE;
+            // Safe: raw is clamped to UNPROVEN_CAP, which fits uint24.
+            // forge-lint: disable-next-line(unsafe-typecast)
             premium = raw > UNPROVEN_CAP ? UNPROVEN_CAP : uint24(raw);
         }
     }
@@ -121,6 +141,8 @@ library FlowRisk {
         } else {
             f = 40_000 + ((s - 7_500) * 60_000) / 2_500;
         }
+        // Safe: f peaks at 100_000 on the branch above, so f - BASE_FEE fits uint24.
+        // forge-lint: disable-next-line(unsafe-typecast)
         premium = uint24(f - BASE_FEE);
     }
 
@@ -163,6 +185,8 @@ library FlowRisk {
 
         if (f < FLOOR_FEE) return FLOOR_FEE;
         if (f > MAX_FEE) return MAX_FEE;
+        // Safe: f is clamped to [FLOOR_FEE, MAX_FEE] by the two checks above.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return uint24(f);
     }
 }

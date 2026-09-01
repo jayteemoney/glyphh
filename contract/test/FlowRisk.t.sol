@@ -23,6 +23,40 @@ contract FlowRiskTest is Test {
         assertLe(FlowRisk.arbPremium(a, true), FlowRisk.arbPremium(b, true));
     }
 
+    /// @notice The tolerance must sit *above* the pool's no-arbitrage band, or it only taxes
+    ///         uninformed flow.
+    /// @dev    This is the invariant `ai/backtest/lvr.py` established empirically, written down
+    ///         so it cannot be silently undone. Below BASE_FEE of divergence no rational
+    ///         arbitrageur trades — the gap does not cover the fee — so a premium charged
+    ///         inside that band cannot be hitting arbitrage. It lands on the roughly half of
+    ///         uninformed swaps that happen to move toward the reference. Replaying 30 days of
+    ///         real ETH/USD: at a 10 bp tolerance 44% of uninformed swaps paid a premium; at
+    ///         40 bps, 1.6% do.
+    function test_arb_toleranceClearsTheNoArbitrageBand() public pure {
+        uint256 bandBps = FlowRisk.BASE_FEE / 100; // fee units -> bps
+        assertGe(
+            FlowRisk.ARB_TOLERANCE_BPS,
+            bandBps,
+            "tolerance inside the no-arb band would surcharge uninformed flow only"
+        );
+    }
+
+    /// @notice A swap inside the no-arbitrage band pays base, in both directions.
+    function test_arb_insideTheBandIsFreeEitherWay() public pure {
+        uint256 inside = FlowRisk.BASE_FEE / 100 - 1; // 29 bps, below the band edge
+        assertEq(FlowRisk.arbPremium(inside, true), 0);
+        assertEq(FlowRisk.arbPremium(inside, false), 0);
+    }
+
+    /// @notice Pins the exact arithmetic the README and demo quote.
+    function test_arb_workedExample() public pure {
+        // 101 bps measured divergence, less the 40 bp tolerance, is 61 bps of real excess.
+        // At 60% capture that is 3_660 fee units on top of the 3_000 base: 0.666%.
+        assertEq(FlowRisk.arbPremium(101, true), 3_660);
+        assertEq(FlowRisk.assembleFee(_inputs(101, true, 0, 0, 0)), 6_660);
+        assertEq(FlowRisk.assembleFee(_inputs(101, false, 0, 0, 0)), 3_000);
+    }
+
     function test_arb_neverExceedsCap(uint256 divergenceBps) public pure {
         divergenceBps = bound(divergenceBps, 0, type(uint128).max);
         assertLe(FlowRisk.arbPremium(divergenceBps, true), FlowRisk.ARB_PREMIUM_CAP);
