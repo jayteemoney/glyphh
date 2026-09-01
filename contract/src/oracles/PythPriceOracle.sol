@@ -82,10 +82,14 @@ contract PythPriceOracle is IPriceOracle, Ownable {
         // price = (base / quote), with the feeds' exponents reconciled.
         int32 expDiff = base.expo - quote.expo;
         if (expDiff >= 0) {
+            // Safe: expDiff is proven non-negative by the branch condition.
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint256 scale = _pow10(uint32(expDiff));
             if (scale == 0) return (0, false);
             price = FullMath.mulDiv(basePrice * scale, 1e18, quotePrice);
         } else {
+            // Safe: -expDiff is positive on this branch, and int32.min cannot arise from a Pyth exponent.
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint256 scale = _pow10(uint32(-expDiff));
             if (scale == 0) return (0, false);
             price = FullMath.mulDiv(basePrice, 1e18, quotePrice * scale);

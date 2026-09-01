@@ -72,10 +72,16 @@ library SwapGuard {
             packed := tload(slotA)
             victim := tload(slotB)
         }
+        // Safe: fee occupies bits 0-23 of the packed word by construction in store().
+        // forge-lint: disable-next-line(unsafe-typecast)
         p.fee = uint24(packed);
+        // Safe: divergenceBps occupies bits 24-39 of the packed word by construction in store().
+        // forge-lint: disable-next-line(unsafe-typecast)
         p.divergenceBps = uint16(packed >> 24);
         p.toxic = ((packed >> 40) & 1) == 1;
         p.sandwichClose = ((packed >> 41) & 1) == 1;
+        // Safe: victim was stored as a whole word holding a 160-bit address.
+        // forge-lint: disable-next-line(unsafe-typecast)
         p.victim = address(uint160(victim));
     }
 

@@ -134,6 +134,8 @@ contract GlyphReactive is AbstractReactive {
         agg.lastUpdated = uint64(block.timestamp);
 
         uint256 avg = agg.count == 0 ? 0 : uint256(agg.scoreSum) / agg.count;
+        // Safe: avg is clamped to MAX_SCORE by the ternary on this line.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint16 aggregateScore = avg > MAX_SCORE ? MAX_SCORE : uint16(avg);
 
         emit AggregateUpdated(wallet, agg.scoreSum, agg.count, aggregateScore);

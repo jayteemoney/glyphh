@@ -180,6 +180,8 @@ contract GlyphHook is BaseGlyphHook, Ownable {
 
         (bool sandwichClose, address victim) = _trackBlock(poolId, swapper, params.zeroForOne);
 
+        // Safe: divergenceBps is clamped to type(uint16).max by the ternary on this line.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint16 divergence16 = divergenceBps > type(uint16).max ? type(uint16).max : uint16(divergenceBps);
         SwapGuard.store(
             SwapGuard.nextLeg(),
@@ -308,6 +310,8 @@ contract GlyphHook is BaseGlyphHook, Ownable {
         if (unspecifiedAmount <= 0) return 0;
 
         uint256 surchargePips = FlowRisk.MAX_FEE - pending.fee;
+        // Safe: unspecifiedAmount is proven positive on line 308, so the int128 fits uint128.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 amount = FullMath.mulDiv(uint256(uint128(unspecifiedAmount)), surchargePips, 1_000_000);
         if (amount == 0) return 0;
 
@@ -320,6 +324,8 @@ contract GlyphHook is BaseGlyphHook, Ownable {
         // needs no external price to establish.
         registry.reportToxicSwap(attacker, PoolId.unwrap(key.toId()), FlowRisk.MAX_SCORE);
 
+        // Safe: amount is at most 10% of a uint128 (surchargePips <= MAX_FEE = 100_000 of 1e6), so it fits int128.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return int128(uint128(amount));
     }
 
@@ -410,6 +416,8 @@ contract GlyphHook is BaseGlyphHook, Ownable {
         if (liquidity == 0 || sqrtPriceX96 == 0) return 0;
 
         int256 specified = params.amountSpecified;
+        // Safe: the negative branch relies on checked arithmetic to reject int256.min; the positive branch is non-negative.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 amount = specified < 0 ? uint256(-specified) : uint256(specified);
         if (amount == 0) return 0;
 
@@ -428,6 +436,8 @@ contract GlyphHook is BaseGlyphHook, Ownable {
     /// @dev Blend measured divergence with standing reputation, capped at MAX_SCORE.
     function _severity(uint16 divergenceBps, uint16 score) internal pure returns (uint16) {
         uint256 combined = (uint256(divergenceBps) + uint256(score)) / 2;
+        // Safe: combined is clamped to MAX_SCORE by the ternary on this line.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return combined > FlowRisk.MAX_SCORE ? FlowRisk.MAX_SCORE : uint16(combined);
     }
 

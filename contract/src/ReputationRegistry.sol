@@ -90,7 +90,11 @@ contract ReputationRegistry is IGlyphRegistry, EIP712, Ownable {
 
     /// @inheritdoc IGlyphRegistry
     function updateTrust(TrustAttestation calldata a) external override {
+        // Safe: attestation deadlines are minutes wide and capped by MAX_DEADLINE_WINDOW, so the
+        // seconds of drift a validator can induce cannot meaningfully extend or shorten one.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp > a.deadline) revert ExpiredDeadline();
+        // forge-lint: disable-next-line(block-timestamp)
         if (a.deadline > block.timestamp + MAX_DEADLINE_WINDOW) revert DeadlineTooFar();
         if (a.value > MAX_SCORE) revert ScoreOutOfRange();
 
@@ -123,6 +127,8 @@ contract ReputationRegistry is IGlyphRegistry, EIP712, Ownable {
         uint256 next = uint256(_decayed(stored.value, stored.updatedAt, DECAY_PERIOD)) + uint256(severity) / 2;
         if (next > MAX_SCORE) next = MAX_SCORE;
 
+        // Safe: next is clamped to MAX_SCORE two lines above.
+        // forge-lint: disable-next-line(unsafe-typecast)
         stored.value = uint16(next);
         stored.updatedAt = uint64(block.timestamp);
 
@@ -140,6 +146,8 @@ contract ReputationRegistry is IGlyphRegistry, EIP712, Ownable {
         uint256 next = uint256(_decayed(stored.value, stored.updatedAt, DECAY_PERIOD)) + uint256(localSeverity) / 2;
         if (next > MAX_SCORE) next = MAX_SCORE;
 
+        // Safe: next is clamped to MAX_SCORE two lines above.
+        // forge-lint: disable-next-line(unsafe-typecast)
         stored.value = uint16(next);
         stored.updatedAt = uint64(block.timestamp);
 
@@ -223,7 +231,11 @@ contract ReputationRegistry is IGlyphRegistry, EIP712, Ownable {
     // ── Internal ──────────────────────────────────────────────────────────────
 
     function _applyAttestation(Attestation calldata a) internal {
+        // Safe: attestation deadlines are minutes wide and capped by MAX_DEADLINE_WINDOW, so the
+        // seconds of drift a validator can induce cannot meaningfully extend or shorten one.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp > a.deadline) revert ExpiredDeadline();
+        // forge-lint: disable-next-line(block-timestamp)
         if (a.deadline > block.timestamp + MAX_DEADLINE_WINDOW) revert DeadlineTooFar();
         if (a.value > MAX_SCORE) revert ScoreOutOfRange();
 
@@ -246,9 +258,14 @@ contract ReputationRegistry is IGlyphRegistry, EIP712, Ownable {
     ///      Parameterised in v2 so toxicity (7 days) and trust (30 days) share one
     ///      implementation rather than drifting apart as two near-identical copies.
     function _decayed(uint16 value, uint64 updatedAt, uint64 period) internal view returns (uint16) {
+        // Safe: decay spans days (7 for toxicity, 30 for trust); a validator's few seconds of
+        // timestamp drift moves the decayed value by well under one basis point.
+        // forge-lint: disable-next-line(block-timestamp)
         if (value == 0 || updatedAt >= block.timestamp) return value;
         uint256 elapsed = block.timestamp - updatedAt;
         if (elapsed >= period) return 0;
+        // Safe: value is a uint16 scaled by a fraction <= 1, so the product cannot exceed it.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return uint16(uint256(value) * (period - elapsed) / period);
     }
 

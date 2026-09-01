@@ -47,3 +47,4 @@ ai/.venv/
 
 # ── Local team handouts (never pushed) ───────────────────────────────────────
 _local/
+ai/backtest/fetch.log
