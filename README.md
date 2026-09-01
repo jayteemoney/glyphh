@@ -7,6 +7,7 @@ have without it, and traders who get sandwiched are paid back by the attacker wh
 them.
 
 > **Live app:** [glyphh-alpha.vercel.app](https://glyphh-alpha.vercel.app)
+> **Pitch deck:** [twelve slides](https://claude.ai/code/artifact/d897919f-fd0c-4759-a515-84e391cbcd9c)
 > **Live on Unichain Sepolia** — every address verified, every claim below reproducible from
 > [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 >
