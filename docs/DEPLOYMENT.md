@@ -134,16 +134,97 @@ Both raw event payloads, if you would rather decode them yourself than trust the
 | | |
 |---|---|
 | `GlyphReactive` (RSC) | `0xCAF1E314726f650481B634Cc79D4B846cb0c3Aa7` on Reactive Lasna (chain 5318007) |
-| Funded with | 0.5 lREACT for callback gas |
+| Funded with | 0.5 lREACT · outstanding debt to the system contract: **0** |
 | Origin / destination chain | 1301 / 1301 |
 | Callback proxy (Unichain Sepolia) | `0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4`, authorized on the adapter |
 
-The callback path was verified functionally rather than assumed, by simulating a call from
-each side of the authorization boundary:
+The callback path was verified functionally from both sides of the authorization boundary:
 
 ```
 from the authorized proxy      -> succeeds
 from an unauthorized address   -> reverts "Authorized sender only"
+```
+
+### The subscription, as the network sees it
+
+`rnk_getFilters` on Lasna returns the live filter set. Ours is registered and correctly
+configured — chain, contract and topic all match what `GlyphReactive`'s constructor asked for:
+
+```
+ChainId : 1301                                                        <- Unichain Sepolia
+Contract: 0xbcc750228205f759adca7289ce3b4266610b634c                  <- ReputationRegistry
+Topics  : 0xf33e93eccfdd30b4b09621228d3b21882b7b2f3281c62f2e9d303360a7aa69a0
+          ( ToxicSwapReported(address,bytes32,uint16,uint256) )
+Configs : contract=0xcaf1e314…3aa7  rvmId=0x0…0  active=false
+```
+
+Unichain Sepolia is a supported origin chain — 581 other filters are registered against it.
+
+### Origin-side preconditions: now met and checkable
+
+`GlyphReactive` propagates a wallet only once it has been reported toxic in
+**`MIN_DISTINCT_POOLS = 2`** different pools. Until 1 September the live deployment had exactly
+one Glyph pool, so that condition could not even be *expressed*, let alone met.
+
+`script/CrossPoolDemo.s.sol` stands up a second pool behind the same hook — same tokens, same
+registry, `tickSpacing` 30 instead of 60, therefore a different `PoolId` — and has one wallet
+make a gap-closing swap in each.
+
+| | Pool A | Pool B |
+|---|---|---|
+| `PoolId` | `0xb86567cd…555329` | `0xddc5954d…d25a17` |
+| tickSpacing | 60 | 30 |
+| toxic swap | [`0x7c950aac…bd09e7`](https://sepolia.uniscan.xyz/tx/0x7c950aacf87951bf5869cd2fba6eb94b90c9a733fc837e7d9367ec6425bd09e7) | [`0x229af55d…bc2afe`](https://sepolia.uniscan.xyz/tx/0x229af55d7130d2f3c4626675f1b49e56655ee0fb3b0290209c6fc131d2bc2afe) |
+| `ToxicSwapReported` severity | 2622 | 3280 |
+
+Both events carry the same wallet `0x47C6bd75…4C60a` and **different pool ids**, which is exactly
+the input the RSC's distinct-pool set counts. Average severity 2951, comfortably over
+`DISPATCH_THRESHOLD = 500`.
+
+### Why the callback has not fired: Lasna is halted
+
+The subscription reads `active: false`, and no reactive transaction can execute, because
+**Reactive Lasna has stopped producing blocks**:
+
+```
+head block   5,699,232
+timestamp    2026-09-01 07:25:35 UTC     (frozen; unchanged across repeated polls)
+owner nonce  latest 3 / pending 4        <- our subscribe() sits unmined in the mempool
+```
+
+The two published Lasna endpoints disagree by roughly 900,000 blocks
+(`lasna-rpc.rnk.dev` at 4.81M, `lasna-omni-rpc.rnk.dev` at 5.70M), which is itself a symptom.
+The RSC is funded, unpaused, and owes the system contract nothing, so none of the documented
+causes of a paused subscription apply.
+
+**This is the one claim in this repository still without a transaction hash behind it, and it is
+blocked on an external testnet outage rather than on anything in this codebase.** We would
+rather say that plainly than quietly drop the claim.
+
+### Completing it when Lasna resumes
+
+Three steps, in order. The first two take a minute; the third is the existing script.
+
+```bash
+# 1. Mine the queued subscribe(). It is stuck only because cast defaulted the tip to 1 wei.
+cast send $RSC "subscribe()" --private-key $REACTIVE_PRIVATE_KEY \
+  --rpc-url https://lasna-omni-rpc.rnk.dev/ --priority-gas-price 5gwei --gas-price 400gwei
+
+# 2. Confirm the network flipped the filter to active.
+curl -s -X POST https://lasna-omni-rpc.rnk.dev/ -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"rnk_getFilters","params":[],"id":1}' \
+  | grep -i 0xbcc750228205f759adca7289ce3b4266610b634c
+
+# 3. Re-emit the two toxic reports. Reactive processes events forward from an active
+#    subscription, so the ones already emitted above will not be replayed.
+forge script script/CrossPoolDemo.s.sol --rpc-url $UNICHAIN_SEPOLIA_RPC_URL --broadcast --slow
+```
+
+Then watch the destination chain for `CrossPoolScoreApplied` on the adapter:
+
+```bash
+cast logs --address 0xd683F42F686CF4b729d5599f6964A0C36e461495 \
+  $(cast keccak "CrossPoolScoreApplied(address,uint16)") --rpc-url $UNICHAIN_SEPOLIA_RPC_URL
 ```
 
 ## Sandwich rebate, end to end on testnet
@@ -187,6 +268,9 @@ middle leg would not read as a third party.
   Pool id `0xb86567cd923105facf7c9e0949c7d9cde93f4a3b21114986280c546247555329`.
 - **Frontend** — pointed at this deployment and live at
   [glyphh-alpha.vercel.app](https://glyphh-alpha.vercel.app).
-- **Known gap, disclosed:** the Reactive cross-pool callback has been exercised from both sides
-  of its authorization boundary, but has not yet fired end-to-end from a real flag in one pool
-  to a repricing in another. It is the one claim on this page without a transaction hash.
+- **Second pool** — `0xddc5954d…d25a17`, same hook, tickSpacing 30, liquidity seeded.
+- **Known gap, disclosed:** the Reactive cross-pool callback has not fired end-to-end. The
+  origin side is now complete and checkable (two distinct pools, two `ToxicSwapReported` events,
+  one wallet); the subscription is registered with the correct chain, contract and topic; and
+  the RSC is funded and debt-free. It is blocked on Reactive Lasna having halted — see above for
+  the evidence and the three commands that finish it once the network resumes.
