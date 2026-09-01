@@ -2,7 +2,9 @@
 // Addresses come from env so the same build works across deployments; fill them in
 // frontend/.env.local after `forge script DeployGlyph` (see .env.example).
 
-export const UNICHAIN_SEPOLIA_CHAIN_ID = 1301;
+// Re-exported from the wagmi config so there is one source of truth for the chain the
+// dashboard is pointed at, and a local Anvil run cannot drift from a hardcoded 1301.
+export { activeChain } from "@/lib/wagmi";
 
 export const REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_REGISTRY_ADDRESS ?? "") as `0x${string}` | "";
 export const HOOK_ADDRESS = (process.env.NEXT_PUBLIC_HOOK_ADDRESS ?? "") as `0x${string}` | "";

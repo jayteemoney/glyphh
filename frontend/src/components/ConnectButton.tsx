@@ -2,7 +2,7 @@
 
 import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { useMounted } from "@/hooks/useMounted";
-import { unichainSepolia } from "@/lib/wagmi";
+import { activeChain } from "@/lib/wagmi";
 import { shortAddr } from "@/lib/format";
 
 /**
@@ -34,14 +34,14 @@ export function ConnectButton({ size = "sm" }: { size?: "sm" | "lg" }) {
   }
 
   if (isConnected && address) {
-    if (chainId !== unichainSepolia.id) {
+    if (chainId !== activeChain.id) {
       return (
         <button
-          onClick={() => switchChain({ chainId: unichainSepolia.id })}
+          onClick={() => switchChain({ chainId: activeChain.id })}
           disabled={switching}
           className={`${base} border border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400`}
         >
-          {switching ? "Switching…" : "Switch network"}
+          {switching ? "Switching…" : `Switch to ${activeChain.name}`}
         </button>
       );
     }
