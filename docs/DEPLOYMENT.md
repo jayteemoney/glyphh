@@ -203,29 +203,30 @@ rather say that plainly than quietly drop the claim.
 
 ### Completing it when Lasna resumes
 
-Three steps, in order. The first two take a minute; the third is the existing script.
+`script/finish-crosspool.sh` does the whole sequence and is safe to re-run — it checks before it
+sends, and refuses to spend origin gas if the subscription has not gone active:
 
 ```bash
-# 1. Mine the queued subscribe(). It is stuck only because cast defaulted the tip to 1 wei.
-cast send $RSC "subscribe()" --private-key $REACTIVE_PRIVATE_KEY \
-  --rpc-url https://lasna-omni-rpc.rnk.dev/ --priority-gas-price 5gwei --gas-price 400gwei
-
-# 2. Confirm the network flipped the filter to active.
-curl -s -X POST https://lasna-omni-rpc.rnk.dev/ -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"rnk_getFilters","params":[],"id":1}' \
-  | grep -i 0xbcc750228205f759adca7289ce3b4266610b634c
-
-# 3. Re-emit the two toxic reports. Reactive processes events forward from an active
-#    subscription, so the ones already emitted above will not be replayed.
-forge script script/CrossPoolDemo.s.sol --rpc-url $UNICHAIN_SEPOLIA_RPC_URL --broadcast --slow
+cd contract && ./script/finish-crosspool.sh
 ```
 
-Then watch the destination chain for `CrossPoolScoreApplied` on the adapter:
+| Exit | Meaning |
+|---|---|
+| `0` | The callback fired. The transaction hash is printed; record it here and drop the disclosed gap. |
+| `2` | Lasna is still at or below the stall block. Nothing was sent. |
+| `3` | Lasna is live but the subscription would not activate. Nothing was sent on the origin chain. |
+| `4` | Subscription active and both reports landed, but no callback inside ~7 minutes — check the RSC's REACT balance and debt. |
 
-```bash
-cast logs --address 0xd683F42F686CF4b729d5599f6964A0C36e461495 \
-  $(cast keccak "CrossPoolScoreApplied(address,uint16)") --rpc-url $UNICHAIN_SEPOLIA_RPC_URL
-```
+What it does, in order:
+
+1. **Refuses to proceed while the head is at or below 5,699,232.** A halted chain cannot mine a
+   subscription, and broadcasting into one only wastes gas and muddies the record.
+2. **Calls `subscribe()` with an explicit 5 gwei priority fee.** The first attempt sat unmined for
+   hours because `cast` defaulted the tip to 1 wei; that is worth pinning rather than rediscovering.
+3. **Re-runs `CrossPoolDemo`.** Reactive processes events forward from an *active* subscription, so
+   the two reports already on chain will not be replayed — they must be emitted again.
+4. **Polls the destination chain for `CrossPoolScoreApplied`** on the adapter and prints the
+   attacker's resulting registry score.
 
 ## Sandwich rebate, end to end on testnet
 
