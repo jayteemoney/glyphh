@@ -181,25 +181,41 @@ Both events carry the same wallet `0x47C6bd75…4C60a` and **different pool ids*
 the input the RSC's distinct-pool set counts. Average severity 2951, comfortably over
 `DISPATCH_THRESHOLD = 500`.
 
-### Why the callback has not fired: Lasna is halted
+### Why the callback has not fired: no ReactVM is bound to the subscription
 
-The subscription reads `active: false`, and no reactive transaction can execute, because
-**Reactive Lasna has stopped producing blocks**:
+Lasna halted on 1 September at block 5,699,232 and resumed by 3 September. With the network
+live, `subscribe()` mined and the filter flipped to **`Active: true`**, and both toxic reports
+were re-emitted across two distinct pools *after* activation — Reactive processes events forward,
+so that ordering matters. Every origin-side and subscription-side precondition is therefore met:
 
 ```
-head block   5,699,232
-timestamp    2026-09-01 07:25:35 UTC     (frozen; unchanged across repeated polls)
-owner nonce  latest 3 / pending 4        <- our subscribe() sits unmined in the mempool
+filter Active        true
+RSC balance          0.5 lREACT
+RSC debt             0
+distinct pools       2   (0xb86567cd…555329, 0xddc5954d…d25a17)
+severities           2622, 3280      avg 2951 >> DISPATCH_THRESHOLD 500
 ```
 
-The two published Lasna endpoints disagree by roughly 900,000 blocks
-(`lasna-rpc.rnk.dev` at 4.81M, `lasna-omni-rpc.rnk.dev` at 5.70M), which is itself a symptom.
-The RSC is funded, unpaused, and owes the system contract nothing, so none of the documented
-causes of a paused subscription apply.
+No callback arrived in the 90 minutes after. The subscription's config carries one anomaly:
 
-**This is the one claim in this repository still without a transaction hash behind it, and it is
-blocked on an external testnet outage rather than on anything in this codebase.** We would
-rather say that plainly than quietly drop the claim.
+```
+Configs: contract=0xcaf1e314…3aa7  rvmId=0x0000000000000000000000000000000000000000  active=true
+```
+
+`RvmId` names the ReactVM instance that actually executes `react()`. Across the live filter set,
+**5,349 active configs carry a real RvmId and 46 carry zero** — ours is in that second group. A
+subscription can be `Active` (the network will match the event) while no ReactVM is bound to run
+the reactive transaction, which fits the evidence exactly: the filter matches, the RSC is funded
+and solvent, and nothing executes.
+
+That points at RSC registration on the Reactive side rather than at anything in this repository.
+The likely next step is redeploying `GlyphReactive` now that Lasna is stable, so the deployment
+is indexed by a network that is actually producing blocks — the original deploy predates the
+halt.
+
+**This remains the one claim in this repository without a transaction hash behind it.** What
+changed is the precision: it is no longer "the callback has not been tried", it is "every
+precondition is met and measurable, and the remaining gap is isolated to a single field."
 
 ### Completing it when Lasna resumes
 

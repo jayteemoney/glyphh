@@ -130,11 +130,13 @@ directions.
 behind the same hook, and one wallet has been reported toxic in both — two `ToxicSwapReported`
 events, two different pool ids, severities 2622 and 3280. The subscription is registered on
 Reactive with the correct chain, contract and topic, and the RSC is funded and owes nothing.
-The callback itself has **not** fired, because Reactive Lasna stopped producing blocks on
-1 September (head frozen at 5,699,232). This is the one claim here without a transaction hash,
-it is blocked on an external outage rather than on this codebase, and
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) carries the evidence and the commands that finish
-it.
+The callback itself has **not** fired. Lasna halted on 1 September and resumed on the 3rd; with
+it live, the subscription is now `Active: true` and both reports were re-emitted across two
+distinct pools after activation, so every precondition is met and measurable. The subscription's
+`RvmId` is zero where 5,349 of 5,395 active configs network-wide carry a real one — that field
+names the ReactVM that executes `react()`, which fits the evidence exactly. This is the one claim
+here without a transaction hash, and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) carries the full
+diagnostic.
 
 ---
 
