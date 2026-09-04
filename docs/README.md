@@ -23,7 +23,6 @@ the two-minute version; these are the arguments behind it.
 | [DEPLOY-RUNBOOK.md](DEPLOY-RUNBOOK.md) | Reproducing the deployment |
 | [BACKTEST.md](BACKTEST.md) | What the fee model does to real historical flow |
 | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | The three-minute demo, timed |
-| [Pitch deck](https://claude.ai/code/artifact/d897919f-fd0c-4759-a515-84e391cbcd9c) | Twelve slides; press `p` or **Present** for presenter mode |
 | [UHI10-CHANGELOG.md](UHI10-CHANGELOG.md) | Every v2 change mapped to the judging criterion it serves |
 
 ## The thesis in three sentences
