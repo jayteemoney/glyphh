@@ -22,7 +22,6 @@ the two-minute version; these are the arguments behind it.
 | [USER-GUIDE.md](USER-GUIDE.md) | Cold clone to claimed rebate, local and on testnet |
 | [DEPLOY-RUNBOOK.md](DEPLOY-RUNBOOK.md) | Reproducing the deployment |
 | [BACKTEST.md](BACKTEST.md) | What the fee model does to real historical flow |
-| [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | The three-minute demo, timed |
 | [UHI10-CHANGELOG.md](UHI10-CHANGELOG.md) | Every v2 change mapped to the judging criterion it serves |
 
 ## The thesis in three sentences

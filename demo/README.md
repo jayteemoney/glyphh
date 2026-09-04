@@ -47,7 +47,7 @@ Run them in two side-by-side terminals during the demo for the clearest contrast
 
 **Fully autonomous mode:** run the keeper (`cd ai && python -m detector.keeper`) in a third
 terminal before the bots. It watches the pool's swaps live, scores every active wallet, and
-flags the attacker mid-burst with no manual `ScoreWallet` step — see `docs/DEMO_SCRIPT.md`
+flags the attacker mid-burst with no manual `ScoreWallet` step
 for the full 3-minute recorded-video flow.
 
 ## Safe by default
