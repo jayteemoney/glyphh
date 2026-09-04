@@ -38,60 +38,74 @@ instead of making the viewer wait.
 
 ---
 
-## 0:00 – 0:25 · The problem, and the thing everyone gets wrong
-
-> "Passive liquidity loses money to the traders who know something it doesn't. That's LVR, and
-> it's the main reason LPing volatile pairs underperforms just holding.
->
-> Every defence I know of prices a *proxy* for that — volatility, order size, price drift — or
-> it prices the *sender*. Proxies misfire in both directions. And pricing the sender fails the
-> moment someone funds a new wallet, which costs a few cents."
+## 0:00 – 0:25 · The problem
 
 **On screen:** the dashboard, quiet, everything at 0.300%.
 
-Do not explain architecture yet. One problem, one sentence, move.
+> "If you provide liquidity to a pool, you're making one offer to everybody. And that's the
+> problem, because not everybody is the same.
+>
+> Most people swapping are just… swapping. But some traders only show up when your price is
+> wrong. They're not taking a risk — they're collecting. And your pool charges them exactly what
+> it charges everyone else.
+>
+> Every fix I've seen guesses at this. It watches volatility, or trade size, or which way the
+> price drifted. Those are hints, not the thing itself. The other approach is to watch the
+> *wallet* — and that stops working the moment someone funds a new one."
+
+One problem, plainly. Don't touch the architecture yet.
 
 ---
 
-## 0:25 – 0:45 · The insight, and the honesty that buys you credibility
+## 0:25 – 0:45 · The idea, and being straight about what's ours
 
-> "Glyph prices the thing itself: what does this swap *do* to the pool? Move it toward the true
-> price and you're taking the arbitrage — you pay for it. Move it away and you're the uninformed
-> flow LPs actually want — you pay base, at any size, from any wallet.
+> "So Glyph asks a different question. Not who sent this swap — **what does this swap do to the
+> pool?**
 >
-> I want to be straight about what's new here. Charging arbitrage against an oracle is not my
-> idea — DetoxHook does it, Nezlobin's directional fee gets there without an oracle at all. What
-> nobody does is the next two layers: paying the sandwich victim out of the attacker's own
-> surcharge, and turning reputation into a *discount* so rotating a wallet costs you something
+> Push the price toward where it should be, and you're collecting the gap. You pay for that.
+> Push it away, and you're the ordinary flow that liquidity providers actually want. You pay the
+> normal rate. Any size. Any wallet.
+>
+> I want to be straight with you about one thing. Charging arbitrage against an oracle isn't my
+> idea — DetoxHook does it, and Nezlobin's directional fee gets there without an oracle at all.
+> What nobody does is the two layers after it: paying the sandwich victim out of the attacker's
+> own money, and turning reputation into a discount so that switching wallets costs you something
 > instead of saving you something."
 
-**This beat wins or loses Original Idea.** A judge who knows DetoxHook is going to think it
-whether or not you say it. Saying it first turns a weakness into a signal that you know the
-field — and it sets up L2 and L3 as the real claims.
+**This beat decides your originality score.** Anyone who knows the field will think "DetoxHook"
+whether you say it or not. Say it first and it becomes evidence you know the landscape — and it
+sets up L2 and L3 as the real claims.
 
 ---
 
 ## 0:45 – 1:20 · L1 live — the pair that is the whole argument
 
-**Pane C:** move the reference price 1% below the pool.
+**Pane A:**
 
 ```bash
-cast send $ORACLE_ADDRESS "setPrice(bytes32,uint256,bool)" $POOL_ID 990000000000000000 true …
+./script/demo-swap.sh closing
 ```
 
-**Swap in the gap-closing direction.** Dashboard row appears: `arb 3660`, final **0.666%**.
+Prints `arb 3660`, final **0.666%**.
 
-> "That swap closed the gap. It paid 0.666%."
+> "There's a one percent gap between this pool and the real price. That swap closed it — so it
+> paid 0.666%."
 
-**Swap the other way, same size, same wallet.** New row: `arb 0`, final **0.300%**.
+```bash
+./script/demo-swap.sh widening
+```
 
-> "Same pool. Same divergence. Same size. Same wallet. Opposite direction — base rate.
+Prints `arb 0`, final **0.300%**.
+
+> "Same pool. Same gap. Same size. Same wallet. I just went the other way — and it's the normal
+> rate.
 >
-> And the premium is arithmetic, not a knob. The gap measured 101 basis points. We ignore the
-> first 40. Sixty percent of the remaining 61 is 3,660. That's the number in the event."
+> And that number isn't a setting I picked. The gap was 101 basis points. We ignore the first 40,
+> because under that nobody's arbitraging anyway — the fee already eats it. Sixty percent of
+> what's left is 3,660. That's the number in the event log, and you can go and read it yourself."
 
-> "Notice this needed no reputation at all. A brand-new wallet pays it on trade one — which is
-> exactly why rotating wallets doesn't help you."
+> "Notice there was no reputation in that at all. A wallet made ten seconds ago pays this on its
+> first trade. That's the whole answer to 'just use a new wallet'."
 
 **If you cut anything, cut later.** This is the most important 35 seconds.
 
@@ -100,69 +114,84 @@ cast send $ORACLE_ADDRESS "setPrice(bytes32,uint256,bool)" $POOL_ID 990000000000
 ## 1:20 – 1:50 · L2 live — the sandwich pays its victim
 
 ```bash
-forge script script/SandwichDemo.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+./script/demo-sandwich.sh
 ```
 
-Dashboard: **Sandwiches caught** ticks to 1, **Returned to victims** shows the amount.
-
-> "Attacker opens, someone trades into the worse price, attacker reverses out, same block.
-> That's a sandwich.
+> "This is a sandwich. Someone jumps in front of your trade, you get a worse price, they close
+> out behind you and keep the difference.
 >
-> Every other hook I've seen charges the attacker more and sends it to the LPs. DetoxHook
-> donates eighty percent to LPs. But the LP isn't who got hurt — the trader in the middle is.
-> Paying LPs just moves the extraction somewhere else."
+> Now — every other hook I've seen charges that attacker more and hands the money to the
+> liquidity providers. DetoxHook sends eighty percent to LPs. But the LP isn't who got hurt here.
+> **You** did. Paying the LPs just moves the money somewhere else."
 
-**Switch to the victim's wallet and press Claim.** Balance rises on screen.
+```bash
+./script/demo-claim.sh
+```
 
-> "That's the attacker's money, in the victim's wallet, from the same transaction that took it."
+Balance goes `1136.589355` → `1141.456600`.
+
+> "That's the attacker's money, in the victim's wallet, out of the same transaction that took it."
 
 ---
 
-## 1:50 – 2:15 · L3 in one line, then the sybil answer
+## 1:50 – 2:15 · L3, and the answer to last year's objection
 
-> "Third layer is reputation, and it only ever buys the fee *down* — a proven wallet gets 0.05%,
-> six times cheaper than base. Unknown wallets making big swaps pay a premium instead.
+> "The third layer is reputation, and it only ever makes the fee *cheaper*. Trade honestly for
+> long enough and you get 0.05% — six times cheaper than the pool's normal rate.
 >
-> Last year a judge told me my reputation system was defeated by rotating EOAs. He was right.
-> So now the clean state isn't free — rotating doesn't return you to zero, it returns you to
-> unproven, and you forfeit the discount you spent ten settled swaps earning."
+> Last year a judge told me my reputation system fell over the moment someone rotated wallets. He
+> was completely right. The reason it broke is that being unknown was **free** — so becoming
+> unknown again was a full reset.
+>
+> So I flipped it. Now a new wallet isn't back to free, it's back to **unproven** — and it's given
+> up a discount that took real trading to earn."
 
 ---
 
-## 2:15 – 2:40 · The backtest, and the bug it found in my own model
+## 2:15 – 2:40 · The number, and the bug I found in my own model
 
-**Pane B**, already finished, shows the table.
+**Pane B:**
 
-> "I replayed thirty days of real ETH/USD through this. The pool keeps 82% of gross arbitrage
-> against 54% for a plain 0.30% pool — that's about $143,000 back to LPs on a ten million dollar
-> pool in a month.
+```bash
+python3 lvr.py
+```
+
+> "I ran thirty days of real ETH price data through this. The pool keeps 82% of the arbitrage
+> instead of 54% — about $143,000 back to liquidity providers in a month, on a ten million dollar
+> pool.
 >
-> But the first run said 44% of ordinary retail swaps were paying a premium, and that was my
-> bug. I'd set the tolerance at 10 basis points thinking 'that's oracle noise'. It's the wrong
-> frame — below 30 bps, which is the base fee, closing the gap doesn't even cover the fee, so
-> no arbitrageur trades there. Everything I was charging in that band was retail.
+> But the first time I ran it, it told me 44% of ordinary swaps were being overcharged. That was
+> my bug. I'd set the threshold at 10 basis points thinking 'that's just oracle noise.' Wrong
+> frame — below 30 basis points, which is the fee, no arbitrageur bothers trading. So everything I
+> was charging down there was ordinary people.
 >
-> Moved it to 40. Retail hit dropped from 44% to one and a half percent. Then I redeployed —
-> that's why the fee you saw was 0.666% and not 0.846%."
+> I moved it to 40. That dropped from 44% to one and a half. Then I redeployed — which is why the
+> fee you saw was 0.666% and not 0.846%."
 
-**This beat is worth more than it looks.** It demonstrates you understand your own mechanism
-well enough to find it wrong, and that the number on screen came from evidence rather than
-taste. It is also the single best answer to "how do I know this works?"
+**This beat is worth more than it looks.** It shows you understand your own mechanism well enough
+to catch it being wrong, and that the number on screen came from evidence rather than taste.
 
 ---
 
-## 2:40 – 2:55 · Limits, named before anyone asks
+## 2:40 – 2:55 · What I'd want you to know before you ask
 
-**Pane A**, run `forge test` now so it lands green while you talk.
+**Pane A:** run `forge test` so it lands green while you talk.
 
-> "Three things you should know. Identity is still a heuristic — that's *why* reputation is only
-> a discount. Sandwich detection has one false positive I've named and tested: reversing your own
-> position around unrelated flow looks identical on chain. And the demo pool uses a settable
-> reference because mock tokens have no Pyth feed; the real adapter is deployed and verified
-> beside it.
+> "Three things, before you ask me.
 >
-> Everything you just saw is live on Unichain Sepolia. Six contracts, all verified, transaction
-> hashes in the repo. 181 tests, 94% coverage. Thanks for watching."
+> Working out who sent a swap is still a heuristic — and that's exactly *why* reputation only ever
+> gives a discount. If I get it wrong, someone loses a discount they earned. Nobody gets through
+> who shouldn't.
+>
+> Sandwich detection has one false positive, and I've named it and written a test for it: if you
+> reverse your own position and someone unrelated trades in the middle, that looks identical from
+> the outside.
+>
+> And this demo pool prices against a reference I can set, because these are mock tokens with no
+> Pyth feed. The real Pyth adapter is deployed and verified right next to it.
+>
+> Everything you just watched is live on Unichain Sepolia. Six contracts, all verified, every
+> transaction hash is in the repo. 181 tests, 94% coverage. Thanks for watching."
 
 ---
 
@@ -182,18 +211,22 @@ A calm recovery reads as competence. A restart eats a take.
 
 ## Beat sheet
 
-| Time | Beat | On screen | Layer |
+| Time | Beat | Pane | Command |
 |---|---|---|---|
-| 0:00 | LVR; proxies and senders both fail | quiet dashboard | — |
-| 0:25 | Price what the swap does; **name the prior art** | still dashboard | — |
-| 0:45 | Gap-closing swap → 0.666% | terminal + new row | **L1** |
-| 1:05 | Gap-widening swap → 0.300% | second row beside it | **L1** |
-| 1:20 | Sandwich staged, stats tick up | dashboard | **L2** |
-| 1:38 | Victim claims, balance rises | wallet | **L2** |
-| 1:50 | Discount, not penalty; the sybil answer | fee breakdown | **L3** |
-| 2:15 | 82% vs 54%; the bug I found in myself | backtest output | — |
-| 2:40 | Three disclosed limits | dashboard | — |
-| 2:50 | Live, verified, 181 tests, 94% | test output | — |
+| 0:00 | The problem, plainly | browser | — |
+| 0:25 | The idea, and naming the prior art | browser | — |
+| 0:45 | Gap-closing swap → **0.666%** | **A** | `./script/demo-swap.sh closing` |
+| 1:05 | Gap-widening swap → **0.300%** | **A** | `./script/demo-swap.sh widening` |
+| 1:20 | Sandwich staged | **A** | `./script/demo-sandwich.sh` |
+| 1:38 | Victim is paid | **A** | `./script/demo-claim.sh` |
+| 1:50 | Discount, not penalty — the sybil answer | browser | — |
+| 2:15 | 82% vs 54%, and the bug I found | **B** | `python3 lvr.py` |
+| 2:40 | Three disclosed limits | browser | — |
+| 2:50 | Live, verified, 181 tests | **A** | `forge test` |
+
+Pane A is `~/glyphh/contract`, pane B is `~/glyphh/ai/backtest`. Run `./script/demo-reset.sh`
+before every take — it re-solves the reference so the fee is exactly 0.666%, and clears the
+vault so the sandwich beat rises from zero.
 
 ## What this covers that last year's didn't
 
